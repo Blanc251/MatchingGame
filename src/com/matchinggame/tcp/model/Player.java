@@ -9,11 +9,13 @@ public class Player implements Serializable {
     private String username;
     private int totalScore;
     private String status;
+    private int totalWins;
 
     public Player(String username, int totalScore, String status) {
         this.username = username;
         this.totalScore = totalScore;
         this.status = status;
+        this.totalWins = 0;
     }
 
     public String getUsername() {
@@ -38,6 +40,14 @@ public class Player implements Serializable {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+    
+    public int getTotalWins() {
+        return totalWins;
+    }
+
+    public void setTotalWins(int totalWins) {
+        this.totalWins = totalWins;
     }
 
     @Override

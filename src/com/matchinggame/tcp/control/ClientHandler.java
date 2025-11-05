@@ -123,6 +123,19 @@ public class ClientHandler extends Thread {
                 FlipData flipData = (FlipData) command.getData();
                 serverControl.handleFlipCard(this, flipData);
                 break;
+            
+            case QUIT_GAME:
+                serverControl.handleQuitGame(this);
+                break;
+            
+            case REMATCH_REQUEST:
+                serverControl.handleRematchRequest(this);
+                break;
+            
+            case REMATCH_RESPONSE:
+                boolean accepted = (Boolean) command.getData();
+                serverControl.handleRematchResponse(this, accepted);
+                break;
                 
             default:
                 serverControl.logError("Nhận lệnh không xác định từ " + player.getUsername() + ": " + command.getType());

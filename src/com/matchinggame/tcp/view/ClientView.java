@@ -65,6 +65,11 @@ public class ClientView extends JFrame {
     private JLabel player1ScoreLabel;
     private JLabel player2ScoreLabel;
     private JLabel turnStatusLabel;
+    
+    private JPanel gameControlPanel;
+    private JButton quitGameButton;
+    
+    private JLabel countdownLabel;
 
     public ClientView() {
         super("Game Lobby");
@@ -200,27 +205,46 @@ public class ClientView extends JFrame {
         gamePanel.add(roomInfoPanel, BorderLayout.WEST);
 
         JPanel centerGamePanel = new JPanel(new BorderLayout());
+        
         gameBoardPanel = new JPanel();
         centerGamePanel.add(gameBoardPanel, BorderLayout.CENTER);
         
-        JPanel scorePanel = new JPanel(new GridLayout(1, 3));
+        JPanel topGamePanel = new JPanel(new GridLayout(1, 3));
         player1ScoreLabel = new JLabel("Player 1: 0");
         player2ScoreLabel = new JLabel("Player 2: 0");
         turnStatusLabel = new JLabel("Đang chờ...");
+        countdownLabel = new JLabel("Sẵn sàng...");
         
         player1ScoreLabel.setHorizontalAlignment(SwingConstants.CENTER);
         player2ScoreLabel.setHorizontalAlignment(SwingConstants.CENTER);
         turnStatusLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        countdownLabel.setHorizontalAlignment(SwingConstants.CENTER);
         
-        scorePanel.add(player1ScoreLabel);
-        scorePanel.add(turnStatusLabel);
-        scorePanel.add(player2ScoreLabel);
+        topGamePanel.add(player1ScoreLabel);
+        topGamePanel.add(turnStatusLabel);
+        topGamePanel.add(player2ScoreLabel);
         
-        centerGamePanel.add(scorePanel, BorderLayout.NORTH);
+        centerGamePanel.add(topGamePanel, BorderLayout.NORTH);
+        
+        // --- KHỞI TẠO VÀ SỬ DỤNG gameControlPanel ĐÚNG CÁCH ---
+        
+        // Khởi tạo gameControlPanel (Fix NPE)
+        gameControlPanel = new JPanel(new FlowLayout());
+        quitGameButton = new JButton("Thoát");
+        quitGameButton.addActionListener(e -> quitGame());
+        gameControlPanel.add(quitGameButton);
+        
+        // Tạo panel chứa cả Countdown và GameControlPanel ở phía South
+        JPanel southPanel = new JPanel(new BorderLayout());
+        southPanel.add(countdownLabel, BorderLayout.NORTH);
+        southPanel.add(gameControlPanel, BorderLayout.CENTER);
+
+        centerGamePanel.add(southPanel, BorderLayout.SOUTH);
+        // -----------------------------------------------------------
         
         gamePanel.add(centerGamePanel, BorderLayout.CENTER);
     }
-
+    
     private void showLobbyView() {
         currentRoom = null;
         currentGameState = null;
@@ -249,6 +273,11 @@ public class ClientView extends JFrame {
                 updatePlayerList(lobbyPlayers);
                 break;
                 
+            case UPDATE_PLAYER_SCORE:
+                List<Player> leaderboard = (List<Player>) command.getData();
+                updateLeaderboard(leaderboard); 
+                break;
+                
             case UPDATE_ROOM_LIST:
                 ArrayList<GameRoom> rooms = (ArrayList<GameRoom>) command.getData();
                 updateRoomList(rooms);
@@ -275,7 +304,7 @@ public class ClientView extends JFrame {
                 }
                 break;
 
-            case RECEIVE_INVITE_DECLINED:
+          case RECEIVE_INVITE_DECLINED:
                 String declineMsg = (String) command.getData();
                 JOptionPane.showMessageDialog(this, declineMsg, "Từ chối lời mời", JOptionPane.INFORMATION_MESSAGE);
                 break;
@@ -287,12 +316,12 @@ public class ClientView extends JFrame {
                 break;
                 
             case UPDATE_ROOM_STATE:
-    GameRoom updatedRoom = (GameRoom) command.getData();
-    if (currentRoom != null && currentRoom.getRoomId().equals(updatedRoom.getRoomId())) {
-        System.out.println("Client " + currentUsername + " - Updating room state. Players received: " + updatedRoom.getPlayerCount() + ", Players: " + updatedRoom.getPlayers().stream().map(p -> p.getUsername()).collect(java.util.stream.Collectors.toList()));
-        updateRoomState(updatedRoom);
-    }
-    break;
+                GameRoom updatedRoom = (GameRoom) command.getData();
+                if (currentRoom != null && currentRoom.getRoomId().equals(updatedRoom.getRoomId())) {
+                    System.out.println("Client " + currentUsername + " - Updating room state. Players received: " + updatedRoom.getPlayerCount() + ", Players: " + updatedRoom.getPlayers().stream().map(p -> p.getUsername()).collect(java.util.stream.Collectors.toList()));
+                    updateRoomState(updatedRoom);
+                }
+                break;
                 
             case GAME_STARTED:
             case GAME_UPDATE:
@@ -303,8 +332,7 @@ public class ClientView extends JFrame {
             case GAME_OVER:
                 currentGameState = (GameState) command.getData();
                 renderGameBoard(currentGameState);
-                JOptionPane.showMessageDialog(this, currentGameState.getMessage(), "Trò chơi kết thúc", JOptionPane.INFORMATION_MESSAGE);
-                leaveCurrentRoom();
+                showGameOverDialog(currentGameState.getMessage());
                 break;
                 
             case JOIN_ROOM_FAILED:
@@ -318,8 +346,38 @@ public class ClientView extends JFrame {
                 showLobbyView();
                 break;
                 
+            case REMATCH_REQUEST:
+                String rematcher = command.getUsername();
+                if (currentRoom != null && currentRoom.getStatus().equals("FINISHED")) {
+                    int rematchChoice = JOptionPane.showConfirmDialog(this, 
+                            rematcher + " muốn chơi lại. Bạn có đồng ý?",
+                            "Yêu cầu chơi lại", JOptionPane.YES_NO_OPTION);
+                    clientControl.sendCommand(new Command(Command.Type.REMATCH_RESPONSE, currentUsername, rematchChoice == JOptionPane.YES_OPTION));
+                }
+                break;
+                
             default:
                 break;
+        }
+    }
+    
+    private void updateLeaderboard(List<Player> leaderboard) {
+        if (!leaderboard.isEmpty()) {
+            Player topPlayer = leaderboard.get(0);
+            System.out.println("Leader: " + topPlayer.getUsername() + ", Score: " + topPlayer.getTotalScore() + ", Wins: " + topPlayer.getTotalWins());
+        }
+    }
+    
+    private void showGameOverDialog(String message) {
+        int choice = JOptionPane.showConfirmDialog(this, 
+                message + "\n\nChơi lại?",
+                "Ván chơi kết thúc", 
+                JOptionPane.YES_NO_OPTION);
+        
+        if (choice == JOptionPane.YES_OPTION) {
+            clientControl.sendCommand(new Command(Command.Type.REMATCH_REQUEST, currentUsername, null));
+        } else {
+            leaveCurrentRoom();
         }
     }
     
@@ -364,28 +422,34 @@ public class ClientView extends JFrame {
     
     for (Player p : room.getPlayers()) {
         String playerText = p.getUsername();
-        if (p.getUsername().equalsIgnoreCase(room.getHost().getUsername())) {
-            playerText += " (Host)";
+        
+        boolean isCurrentPlayerHost = p.getUsername().equalsIgnoreCase(room.getHost().getUsername());
+        
+        if (isCurrentPlayerHost) {
+            playerText += " (Host) - Sẵn sàng";
+        } else {
+            if (room.getReadyPlayers().stream().anyMatch(name -> name.equalsIgnoreCase(p.getUsername()))) {
+                playerText += " - Sẵn sàng";
+            } else {
+                playerText += " - Chưa sẵn sàng";
+            }
         }
         
-        if (room.getReadyPlayers().stream().anyMatch(name -> name.equalsIgnoreCase(p.getUsername()))) {
-            playerText += " - Sẵn sàng";
-        } else {
-            playerText += " - Chưa sẵn sàng";
-        }
         System.out.println("[CLIENT " + currentUsername + "] Adding: " + playerText);
         roomPlayerListModel.addElement(playerText);
     }
     
-    readyButton.setVisible(true);
+    readyButton.setVisible(!isHost);
     startGameButton.setVisible(isHost);
     
-    if(room.getReadyPlayers().stream().anyMatch(name -> name.equalsIgnoreCase(currentUsername))) {
-        readyButton.setEnabled(false);
-        readyButton.setText("Đã sẵn sàng");
-    } else {
-        readyButton.setEnabled(true);
-        readyButton.setText("Sẵn sàng");
+    if (!isHost) {
+        if(room.getReadyPlayers().stream().anyMatch(name -> name.equalsIgnoreCase(currentUsername))) {
+            readyButton.setEnabled(false);
+            readyButton.setText("Đã sẵn sàng");
+        } else {
+            readyButton.setEnabled(true);
+            readyButton.setText("Sẵn sàng");
+        }
     }
     
     startGameButton.setEnabled(room.areAllPlayersReady() && room.getPlayerCount() > 1);
@@ -413,11 +477,20 @@ public class ClientView extends JFrame {
         }
         
         boolean myTurn = state.getCurrentPlayerUsername().equalsIgnoreCase(currentUsername);
+        
         turnStatusLabel.setText("Lượt của: " + state.getCurrentPlayerUsername());
         turnStatusLabel.setForeground(myTurn ? Color.BLUE : Color.BLACK);
+        countdownLabel.setText(state.getMessage());
+        
+        if (!state.getGameStatus().equals("PLAYING")) {
+            countdownLabel.setText("Trò chơi đã kết thúc: " + state.getMessage());
+        } else if (myTurn) {
+             countdownLabel.setText("LƯỢT CỦA BẠN! " + state.getMessage());
+        } else {
+             countdownLabel.setText("Đang chờ đối thủ... " + state.getMessage());
+        }
 
         Map<String, Integer> scores = state.getScores();
-        int i = 0;
         List<Player> playersInRoom = currentRoom.getPlayers();
         
         if(playersInRoom.size() > 0) {
@@ -448,6 +521,8 @@ public class ClientView extends JFrame {
         
         readyButton.setVisible(false);
         startGameButton.setVisible(false);
+        
+        gameControlPanel.setVisible(state.getGameStatus().equals("PLAYING") || state.getGameStatus().equals("FINISHED"));
         
         gameBoardPanel.revalidate();
         gameBoardPanel.repaint();
@@ -505,6 +580,19 @@ public class ClientView extends JFrame {
             gameBoardPanel.removeAll();
             cardButtons.clear();
             showLobbyView();
+        }
+    }
+    
+    private void quitGame() {
+        if (currentRoom != null && currentRoom.getStatus().equals("PLAYING")) {
+             int choice = JOptionPane.showConfirmDialog(this, 
+                    "Bạn có chắc muốn thoát? Bạn sẽ bị tính thua.",
+                    "Thoát trò chơi", JOptionPane.YES_NO_OPTION);
+             if (choice == JOptionPane.YES_OPTION) {
+                 clientControl.sendCommand(new Command(Command.Type.QUIT_GAME, currentUsername, currentRoom.getRoomId()));
+             }
+        } else {
+            leaveCurrentRoom();
         }
     }
 

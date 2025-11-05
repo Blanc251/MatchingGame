@@ -16,13 +16,15 @@ public class GameRoom implements Serializable {
     private int cardCount;
     private String status;
     
-    private List<String> readyPlayers;
+    public List<String> readyPlayers;
     private GameState gameState;
+    
+    private ConcurrentHashMap<String, Boolean> rematchStatus;
 
-    // ✅ Constructor không tham số cho deserialization
     public GameRoom() {
         this.players = new ArrayList<>();
         this.readyPlayers = new ArrayList<>();
+        this.rematchStatus = new ConcurrentHashMap<>();
     }
 
     public GameRoom(String roomId, Player host, int cardCount) {
@@ -31,10 +33,11 @@ public class GameRoom implements Serializable {
         this.cardCount = cardCount;
         this.maxPlayers = 2;
         this.status = "WAITING";
-        // ✅ Dùng ArrayList thay vì Collections.synchronizedList
         this.players = new ArrayList<>();
         this.players.add(host);
         this.readyPlayers = new ArrayList<>();
+        this.readyPlayers.add(host.getUsername());
+        this.rematchStatus = new ConcurrentHashMap<>();
     }
     
     public void initializeGame() {
@@ -48,6 +51,7 @@ public class GameRoom implements Serializable {
         ConcurrentHashMap<String, Integer> scores = new ConcurrentHashMap<>();
         for(Player p : players) {
             scores.put(p.getUsername(), 0);
+            rematchStatus.put(p.getUsername(), false);
         }
 
         this.gameState = new GameState(roomId, cards, scores, cardCount);
@@ -62,8 +66,15 @@ public class GameRoom implements Serializable {
             readyPlayers.add(username);
         }
     }
+    
+    public ConcurrentHashMap<String, Boolean> getRematchStatus() {
+        return rematchStatus;
+    }
 
     public boolean areAllPlayersReady() {
+        if (players.size() == 1 && players.get(0).equals(host)) {
+            return true;
+        }
         return readyPlayers.size() == players.size();
     }
     
@@ -86,6 +97,7 @@ public class GameRoom implements Serializable {
     public void removePlayer(Player player) {
         players.remove(player);
         readyPlayers.remove(player.getUsername());
+        rematchStatus.remove(player.getUsername());
     }
 
     public String getRoomId() {

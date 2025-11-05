@@ -5,13 +5,14 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Random;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import com.matchinggame.tcp.model.Command;
@@ -29,6 +30,8 @@ public class ServerControl {
     private List<Player> onlinePlayers;
     private List<GameRoom> activeRooms;
     private ServerView view;
+    
+    private Map<String, Player> allPlayersData = new ConcurrentHashMap<>();
 
     private Map<String, Timer> turnTimers = Collections.synchronizedMap(new java.util.concurrent.ConcurrentHashMap<>());
     private Map<String, int[]> flippedCardsMap = Collections.synchronizedMap(new java.util.concurrent.ConcurrentHashMap<>());
@@ -45,6 +48,8 @@ public class ServerControl {
         try {
             serverSocket = new ServerSocket(PORT);
             view.logMessage("Server đang chạy trên cổng " + PORT + "...");
+            
+            mockLoadInitialPlayers();
 
             while (true) {
                 Socket clientSocket = serverSocket.accept();
@@ -57,6 +62,34 @@ public class ServerControl {
             view.logMessage("Lỗi Server: " + e.getMessage());
         }
     }
+    
+    private void mockLoadInitialPlayers() {
+        Random rand = new Random();
+        for (int i = 0; i < 5; i++) {
+            Player p = new Player("MockUser" + i, rand.nextInt(50) * 10, "Offline");
+            p.setTotalWins(rand.nextInt(10));
+            allPlayersData.put(p.getUsername().toLowerCase(), p);
+        }
+    }
+    
+    private void mockUpdatePlayerScoreAndWins(Player player, int scoreChange, boolean isWinner) {
+        Player dataPlayer = allPlayersData.get(player.getUsername().toLowerCase());
+        if (dataPlayer != null) {
+            dataPlayer.setTotalScore(dataPlayer.getTotalScore() + scoreChange);
+            if (isWinner) {
+                dataPlayer.setTotalWins(dataPlayer.getTotalWins() + 1);
+            }
+        }
+    }
+    
+    public List<Player> getLeaderboard() {
+        synchronized (allPlayersData) {
+            return allPlayersData.values().stream()
+                    .sorted(Comparator.comparing(Player::getTotalScore, Comparator.reverseOrder())
+                            .thenComparing(Player::getTotalWins, Comparator.reverseOrder()))
+                    .collect(Collectors.toList());
+        }
+    }
 
     public boolean isUserLoggedIn(String username) {
         synchronized (onlinePlayers) {
@@ -65,17 +98,15 @@ public class ServerControl {
     }
 
     public Player findOrCreatePlayer(String username) {
-        synchronized (onlinePlayers) {
-            Optional<Player> existingPlayer = onlinePlayers.stream()
-                    .filter(p -> p.getUsername().equalsIgnoreCase(username))
-                    .findFirst();
+        Player existingPlayer = allPlayersData.get(username.toLowerCase());
             
-            if (existingPlayer.isPresent()) {
-                return existingPlayer.get();
-            } else {
-                int mockScore = new Random().nextInt(1000); 
-                return new Player(username, mockScore, "Offline");
-            }
+        if (existingPlayer != null) {
+            return existingPlayer;
+        } else {
+            int mockScore = new Random().nextInt(100) * 10; 
+            Player newPlayer = new Player(username, mockScore, "Offline");
+            allPlayersData.put(username.toLowerCase(), newPlayer);
+            return newPlayer;
         }
     }
 
@@ -89,6 +120,7 @@ public class ServerControl {
         view.addUserToList(player.getUsername()); 
         view.logMessage("[LOGIN] " + player.getUsername() + " đã đăng nhập. (Score: " + player.getTotalScore() + ")");
         broadcastRoomList();
+        broadcastPlayerScoreUpdate();
     }
 
     public void removePlayer(String username) {
@@ -111,6 +143,7 @@ public class ServerControl {
             removePlayer(username);
             view.logMessage("[DISCONNECT] " + username + " đã ngắt kết nối.");
             broadcastPlayerList();
+            broadcastPlayerScoreUpdate();
         }
         view.logMessage("Tổng số Client đang kết nối: " + connectedClients.size());
     }
@@ -126,6 +159,18 @@ public class ServerControl {
         }
             
         Command command = new Command(Command.Type.UPDATE_PLAYER_LIST, "SERVER", new ArrayList<>(lobbyPlayers));
+        
+        synchronized (connectedClients) {
+            for (ClientHandler client : connectedClients) {
+                if (client.getPlayer() != null) { 
+                    client.sendMessage(command);
+                }
+            }
+        }
+    }
+    
+    public void broadcastPlayerScoreUpdate() {
+        Command command = new Command(Command.Type.UPDATE_PLAYER_SCORE, "SERVER", getLeaderboard());
         
         synchronized (connectedClients) {
             for (ClientHandler client : connectedClients) {
@@ -246,7 +291,6 @@ public class ServerControl {
     if (room != null) {
         boolean added = false;
         
-        // ✅ Cải tiến: Đồng bộ hóa trên danh sách người chơi (room.getPlayers())
         synchronized (room.getPlayers()) {
             if (room.getPlayerCount() < room.getMaxPlayers() && !room.getPlayers().contains(player)) {
                 room.getPlayers().add(player);
@@ -261,11 +305,10 @@ public class ServerControl {
             view.logMessage("[JOIN] Room now has " + room.getPlayerCount() + " players: " + 
                           room.getPlayers().stream().map(Player::getUsername).collect(Collectors.toList()));
             
-            // ✅ Gửi room cập nhật cho client vừa join
             Command successCmd = new Command(Command.Type.JOIN_ROOM_SUCCESS, "SERVER", room);
             handler.sendMessage(successCmd);
             
-            // ✅ Gửi room cập nhật cho TẤT CẢ clients trong phòng (bao gồm host)
+            
             broadcastRoomState(room);
             
             broadcastPlayerList();
@@ -286,6 +329,23 @@ public class ServerControl {
 
         cleanupRoomTimer(roomId);
         
+        boolean wasPlaying = "PLAYING".equals(room.getStatus());
+        Player winner = null;
+        
+        if (wasPlaying) {
+            winner = room.getPlayers().stream()
+                    .filter(p -> !p.getUsername().equals(player.getUsername()))
+                    .findFirst().orElse(null);
+            
+            if (winner != null) {
+                mockUpdatePlayerScoreAndWins(winner, 5, true); 
+                room.getGameState().setMessage(player.getUsername() + " đã thoát! " + winner.getUsername() + " chiến thắng!");
+                room.getGameState().setGameStatus("FINISHED");
+                Command endCmd = new Command(Command.Type.GAME_OVER, "SERVER", room.getGameState());
+                broadcastToRoom(room, endCmd, handler);
+            }
+        }
+
         synchronized (room.getPlayers()) {
             room.removePlayer(player);
         }
@@ -295,18 +355,105 @@ public class ServerControl {
             activeRooms.remove(room);
             view.logMessage("Phòng " + roomId + " đã bị giải tán.");
         } else {
-            if (player.equals(room.getHost()) || room.getStatus().equals("PLAYING")) {
+            if (player.equals(room.getHost())) {
                 activeRooms.remove(room);
                 view.logMessage("Chủ phòng " + player.getUsername() + " đã rời, giải tán phòng " + roomId);
                 Command closeCmd = new Command(Command.Type.LEAVE_ROOM, "SERVER", "Chủ phòng đã rời, phòng bị giải tán.");
-                broadcastToRoom(room, closeCmd, null);
+                broadcastToRoom(room, closeCmd, handler);
             } else {
-                broadcastRoomState(room);
+                if (wasPlaying && winner == null) { 
+                    activeRooms.remove(room);
+                    view.logMessage("Phòng " + roomId + " bị giải tán do đối thủ rời đi.");
+                    Command closeCmd = new Command(Command.Type.LEAVE_ROOM, "SERVER", "Đối thủ đã rời, phòng bị giải tán.");
+                    broadcastToRoom(room, closeCmd, handler);
+                } else if (!wasPlaying) {
+                    broadcastRoomState(room);
+                }
             }
         }
         
+        if (wasPlaying) {
+            broadcastPlayerScoreUpdate();
+        }
         broadcastPlayerList();
         broadcastRoomList();
+    }
+    
+    public void handleQuitGame(ClientHandler handler) {
+        GameRoom room = findRoomByPlayer(handler.getPlayer().getUsername());
+        if (room != null) {
+            handleLeaveRoom(handler, room.getRoomId());
+        }
+    }
+    
+    public void handleRematchRequest(ClientHandler handler) {
+        Player player = handler.getPlayer();
+        GameRoom room = findRoomByPlayer(player.getUsername());
+        if (room == null || !room.getStatus().equals("FINISHED")) return;
+
+        room.getRematchStatus().put(player.getUsername(), true);
+        view.logMessage(player.getUsername() + " yêu cầu chơi lại trong phòng " + room.getRoomId());
+
+        if (room.getRematchStatus().values().stream().allMatch(b -> b == true) && room.getPlayerCount() == 2) {
+            view.logMessage("Cả hai đồng ý chơi lại. Tạo ván mới.");
+            Player host = room.getHost();
+            Player player2 = room.getPlayers().stream().filter(p -> !p.equals(host)).findFirst().orElse(null);
+            
+            room.readyPlayers.clear();
+            room.readyPlayers.add(host.getUsername());
+            if(player2 != null) {
+                room.readyPlayers.add(player2.getUsername());
+            }
+            
+            room.initializeGame();
+            
+            flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
+            flipCountMap.put(room.getRoomId(), 0);
+            
+            Command gameStartedCmd = new Command(Command.Type.GAME_STARTED, "SERVER", room.getGameState());
+            broadcastToRoom(room, gameStartedCmd, null);
+            
+            startTurnTimer(room);
+            
+        } else {
+            Command rematchRequestCmd = new Command(Command.Type.REMATCH_REQUEST, player.getUsername(), "Đã gửi yêu cầu chơi lại. Chờ đối thủ.");
+            handler.sendMessage(rematchRequestCmd);
+            
+            Player opponent = room.getPlayers().stream().filter(p -> !p.equals(player)).findFirst().orElse(null);
+            if (opponent != null) {
+                ClientHandler opponentHandler = findClientHandler(opponent.getUsername());
+                if (opponentHandler != null) {
+                    Command opponentRematchCmd = new Command(Command.Type.REMATCH_REQUEST, player.getUsername(), "Đối thủ muốn chơi lại. Bạn có đồng ý?");
+                    opponentHandler.sendMessage(opponentRematchCmd);
+                }
+            }
+        }
+    }
+    
+    public void handleRematchResponse(ClientHandler handler, boolean accepted) {
+        Player player = handler.getPlayer();
+        GameRoom room = findRoomByPlayer(player.getUsername());
+        if (room == null || !room.getStatus().equals("FINISHED")) return;
+        
+        if (accepted) {
+            handleRematchRequest(handler);
+        } else {
+            view.logMessage(player.getUsername() + " từ chối chơi lại trong phòng " + room.getRoomId());
+            
+            Player opponent = room.getPlayers().stream().filter(p -> !p.equals(player)).findFirst().orElse(null);
+            if (opponent != null) {
+                ClientHandler opponentHandler = findClientHandler(opponent.getUsername());
+                if (opponentHandler != null) {
+                    Command closeCmd = new Command(Command.Type.LEAVE_ROOM, "SERVER", player.getUsername() + " đã từ chối chơi lại. Phòng bị giải tán.");
+                    opponentHandler.sendMessage(closeCmd);
+                }
+            }
+            
+            room.getPlayers().forEach(p -> p.setStatus("Online"));
+            activeRooms.remove(room);
+            broadcastPlayerList();
+            broadcastRoomList();
+        }
     }
     
     public void broadcastRoomList() {
@@ -346,7 +493,6 @@ public class ServerControl {
 }
 
 public void broadcastRoomState(GameRoom room) {
-    // ✅ In thông tin phòng trước khi gửi
     view.logMessage("[BROADCAST_ROOM_STATE] Room: " + room.getRoomId() + 
                     ", Players: " + room.getPlayerCount() +
                     ", Details: " + room.getPlayers().stream()
@@ -392,6 +538,11 @@ public void broadcastRoomState(GameRoom room) {
         Player player = handler.getPlayer();
         GameRoom room = findRoomByPlayer(player.getUsername());
         if (room != null) {
+            if (player.getUsername().equalsIgnoreCase(room.getHost().getUsername())) {
+                handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Bạn là chủ phòng, đã sẵn sàng mặc định."));
+                return;
+            }
+            
             synchronized (room.getReadyPlayers()) {
                 room.setPlayerReady(player.getUsername());
             }
@@ -454,7 +605,7 @@ public void broadcastRoomState(GameRoom room) {
         if (flipCount == 1) {
             int[] flippedIndices = flippedCardsMap.get(room.getRoomId());
             gameState.setCardFlipped(flippedIndices[0], false);
-        }
+        } 
 
         flipCountMap.put(room.getRoomId(), 0);
         flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
@@ -484,8 +635,6 @@ public void broadcastRoomState(GameRoom room) {
         if (oldTimer != null) {
             oldTimer.cancel();
         }
-        flippedCardsMap.remove(roomId);
-        flipCountMap.remove(roomId);
     }
 
     public void handleFlipCard(ClientHandler handler, FlipData flipData) {
@@ -498,41 +647,52 @@ public void broadcastRoomState(GameRoom room) {
         
         GameState gameState = room.getGameState();
         if (!player.getUsername().equals(gameState.getCurrentPlayerUsername())) {
+            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Chưa tới lượt của bạn."));
+            return;
+        }
+        
+        int currentFlipCount = flipCountMap.getOrDefault(roomId, 0);
+        if (currentFlipCount >= 2) {
+            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Đã lật 2 lá. Vui lòng chờ kiểm tra kết quả."));
             return;
         }
         
         if (gameState.isCardFlipped()[cardIndex] || gameState.isCardMatched()[cardIndex]) {
             return;
         }
-
+        
         Timer timer = turnTimers.get(roomId);
         if (timer != null) {
-            timer.cancel();
+            timer.cancel(); 
+            turnTimers.remove(roomId);
         }
 
-        int flipCount = flipCountMap.getOrDefault(roomId, 0);
+        int newFlipCount = currentFlipCount + 1;
         int[] flippedIndices = flippedCardsMap.getOrDefault(roomId, new int[]{-1, -1});
 
         gameState.setCardFlipped(cardIndex, true);
-        flipCount++;
 
-        if (flipCount == 1) {
+        if (newFlipCount == 1) {
             flippedIndices[0] = cardIndex;
             gameState.setMessage(player.getUsername() + " đã lật 1 lá...");
             
             Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
             broadcastToRoom(room, updateCmd, null);
             
-            flipCountMap.put(roomId, flipCount);
+            flipCountMap.put(roomId, newFlipCount);
             flippedCardsMap.put(roomId, flippedIndices);
-            startTurnTimer(room);
+            
+            startTurnTimer(room); 
 
-        } else if (flipCount == 2) {
+        } else if (newFlipCount == 2) {
             flippedIndices[1] = cardIndex;
             gameState.setMessage(player.getUsername() + " đã lật 2 lá...");
 
             Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
             broadcastToRoom(room, updateCmd, null);
+            
+            flipCountMap.put(roomId, newFlipCount);
+            flippedCardsMap.put(roomId, flippedIndices);
             
             checkMatch(room, player, flippedIndices);
         }
@@ -543,6 +703,8 @@ public void broadcastRoomState(GameRoom room) {
         String card1 = gameState.getCardValues().get(flippedIndices[0]);
         String card2 = gameState.getCardValues().get(flippedIndices[1]);
 
+        cleanupRoomTimer(room.getRoomId());
+        
         Timer delayTimer = new Timer();
         delayTimer.schedule(new TimerTask() {
             @Override
@@ -553,24 +715,21 @@ public void broadcastRoomState(GameRoom room) {
                     
                     Map<String, Integer> scores = gameState.getScores();
                     scores.put(player.getUsername(), scores.get(player.getUsername()) + 1);
-                    gameState.setMessage(player.getUsername() + " ăn điểm! Bạn được đi tiếp.");
-
+                    
                     if (isGameFinished(gameState)) {
-                        gameState.setGameStatus("FINISHED");
-                        Map.Entry<String, Integer> winner = Collections.max(scores.entrySet(), Map.Entry.comparingByValue());
-                        gameState.setMessage("Trò chơi kết thúc! " + winner.getKey() + " chiến thắng!");
-                        Command endCmd = new Command(Command.Type.GAME_OVER, "SERVER", gameState);
-                        broadcastToRoom(room, endCmd, null);
-                        cleanupRoomTimer(room.getRoomId());
-                        activeRooms.remove(room);
-                        broadcastRoomList();
+                        handleGameOver(room, scores);
                     } else {
+                        gameState.setMessage(player.getUsername() + " ăn điểm! Bạn được đi tiếp.");
                         Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
                         broadcastToRoom(room, updateCmd, null);
+                        
+                        flipCountMap.put(room.getRoomId(), 0);
+                        flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
                         startTurnTimer(room);
                     }
                     
                 } else {
+                    // CẬP NHẬT: Lật úp 2 thẻ bài
                     gameState.setCardFlipped(flippedIndices[0], false);
                     gameState.setCardFlipped(flippedIndices[1], false);
                     
@@ -579,13 +738,43 @@ public void broadcastRoomState(GameRoom room) {
                     
                     Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
                     broadcastToRoom(room, updateCmd, null);
+                    
+                    flipCountMap.put(room.getRoomId(), 0);
+                    flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
                     startTurnTimer(room);
                 }
-                
-                flipCountMap.put(room.getRoomId(), 0);
-                flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
             }
         }, 2000);
+    }
+    
+    private void handleGameOver(GameRoom room, Map<String, Integer> finalScores) {
+        room.setStatus("FINISHED");
+        room.getGameState().setGameStatus("FINISHED");
+        
+        Map.Entry<String, Integer> winnerEntry = Collections.max(finalScores.entrySet(), Map.Entry.comparingByValue());
+        
+        String winnerName = winnerEntry.getKey();
+        int winnerScore = winnerEntry.getValue();
+        
+        String message = "Trò chơi kết thúc!";
+        
+        for (Player p : room.getPlayers()) {
+            boolean isWinner = p.getUsername().equals(winnerName);
+            int scoreChange = finalScores.get(p.getUsername());
+            mockUpdatePlayerScoreAndWins(p, scoreChange, isWinner);
+            
+            if (isWinner) {
+                message = "Trò chơi kết thúc! " + winnerName + " chiến thắng với " + winnerScore + " điểm!";
+            }
+        }
+        
+        room.getGameState().setMessage(message);
+        Command endCmd = new Command(Command.Type.GAME_OVER, "SERVER", room.getGameState());
+        broadcastToRoom(room, endCmd, null);
+        
+        cleanupRoomTimer(room.getRoomId());
+        broadcastPlayerScoreUpdate();
+        broadcastRoomList();
     }
     
     private boolean isGameFinished(GameState gameState) {

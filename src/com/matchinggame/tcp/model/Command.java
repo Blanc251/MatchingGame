@@ -33,7 +33,12 @@ public class Command implements Serializable {
         GAME_STARTED,
         FLIP_CARD,
         GAME_UPDATE,
-        GAME_OVER
+        GAME_OVER,
+        
+        QUIT_GAME,
+        REMATCH_REQUEST,
+        REMATCH_RESPONSE,
+        UPDATE_PLAYER_SCORE
     }
 
     private Type type;

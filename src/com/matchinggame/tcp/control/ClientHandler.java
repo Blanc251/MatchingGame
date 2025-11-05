@@ -133,6 +133,7 @@ public class ClientHandler extends Thread {
     public void sendMessage(Object object) {
         if (isClosing) return;
         try {
+            oos.reset();
             oos.writeObject(object);
             oos.flush();
         } catch (IOException e) {

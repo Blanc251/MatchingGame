@@ -287,12 +287,12 @@ public class ClientView extends JFrame {
                 break;
                 
             case UPDATE_ROOM_STATE:
-                GameRoom updatedRoom = (GameRoom) command.getData();
-                if (currentRoom != null && currentRoom.getRoomId().equals(updatedRoom.getRoomId())) {
-                    System.out.println("Updating room state. Players received: " + updatedRoom.getPlayerCount());
-                    updateRoomState(updatedRoom);
-                }
-                break;
+    GameRoom updatedRoom = (GameRoom) command.getData();
+    if (currentRoom != null && currentRoom.getRoomId().equals(updatedRoom.getRoomId())) {
+        System.out.println("Client " + currentUsername + " - Updating room state. Players received: " + updatedRoom.getPlayerCount() + ", Players: " + updatedRoom.getPlayers().stream().map(p -> p.getUsername()).collect(java.util.stream.Collectors.toList()));
+        updateRoomState(updatedRoom);
+    }
+    break;
                 
             case GAME_STARTED:
             case GAME_UPDATE:
@@ -348,40 +348,48 @@ public class ClientView extends JFrame {
     }
     
     private void updateRoomState(GameRoom room) {
-        currentRoom = room;
-        setTitle("Phòng: " + room.getRoomId() + " - User: " + currentUsername);
-        roomNameLabel.setText("Phòng: " + room.getRoomId() + " (" + room.getCardCount() + " thẻ)");
-        
-        roomPlayerListModel.clear();
-        boolean isHost = currentUsername.equalsIgnoreCase(room.getHost().getUsername());
-        
-        for (Player p : room.getPlayers()) {
-            String playerText = p.getUsername();
-            if (p.getUsername().equalsIgnoreCase(room.getHost().getUsername())) {
-                playerText += " (Host)";
-            }
-            
-            if (room.getReadyPlayers().stream().anyMatch(name -> name.equalsIgnoreCase(p.getUsername()))) {
-                playerText += " - Sẵn sàng";
-            } else {
-                playerText += " - Chưa sẵn sàng";
-            }
-            roomPlayerListModel.addElement(playerText);
+    currentRoom = room;
+    setTitle("Phòng: " + room.getRoomId() + " - User: " + currentUsername);
+    roomNameLabel.setText("Phòng: " + room.getRoomId() + " (" + room.getCardCount() + " thẻ)");
+    
+    System.out.println("[CLIENT " + currentUsername + "] updateRoomState called");
+    System.out.println("[CLIENT " + currentUsername + "] Room: " + room.getRoomId());
+    System.out.println("[CLIENT " + currentUsername + "] Players count: " + room.getPlayerCount());
+    System.out.println("[CLIENT " + currentUsername + "] Players list: " + 
+                      room.getPlayers().stream().map(Player::getUsername).collect(java.util.stream.Collectors.toList()));
+    System.out.println("[CLIENT " + currentUsername + "] Ready players: " + room.getReadyPlayers());
+    
+    roomPlayerListModel.clear();
+    boolean isHost = currentUsername.equalsIgnoreCase(room.getHost().getUsername());
+    
+    for (Player p : room.getPlayers()) {
+        String playerText = p.getUsername();
+        if (p.getUsername().equalsIgnoreCase(room.getHost().getUsername())) {
+            playerText += " (Host)";
         }
         
-        readyButton.setVisible(!isHost);
-        startGameButton.setVisible(isHost);
-        
-        if(room.getReadyPlayers().stream().anyMatch(name -> name.equalsIgnoreCase(currentUsername))) {
-            readyButton.setEnabled(false);
-            readyButton.setText("Đã sẵn sàng");
+        if (room.getReadyPlayers().stream().anyMatch(name -> name.equalsIgnoreCase(p.getUsername()))) {
+            playerText += " - Sẵn sàng";
         } else {
-            readyButton.setEnabled(true);
-            readyButton.setText("Sẵn sàng");
+            playerText += " - Chưa sẵn sàng";
         }
-        
-        startGameButton.setEnabled(room.areAllPlayersReady() && room.getPlayerCount() > 1);
+        System.out.println("[CLIENT " + currentUsername + "] Adding: " + playerText);
+        roomPlayerListModel.addElement(playerText);
     }
+    
+    readyButton.setVisible(true);
+    startGameButton.setVisible(isHost);
+    
+    if(room.getReadyPlayers().stream().anyMatch(name -> name.equalsIgnoreCase(currentUsername))) {
+        readyButton.setEnabled(false);
+        readyButton.setText("Đã sẵn sàng");
+    } else {
+        readyButton.setEnabled(true);
+        readyButton.setText("Sẵn sàng");
+    }
+    
+    startGameButton.setEnabled(room.areAllPlayersReady() && room.getPlayerCount() > 1);
+}
 
     private void renderGameBoard(GameState state) {
         if (state == null) return;

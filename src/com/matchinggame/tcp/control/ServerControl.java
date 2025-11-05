@@ -236,35 +236,47 @@ public class ServerControl {
     }
 
     public void handleJoinRoom(ClientHandler handler, String roomId) {
-        Player player = handler.getPlayer();
-        if (player == null || !"Online".equals(player.getStatus())) {
-            handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Bạn đang ở trong phòng khác."));
-            return;
-        }
-
-        GameRoom room = findRoomById(roomId);
-        if (room != null) {
-            boolean added;
-            synchronized (room.getPlayers()) {
-                added = room.addPlayer(player);
-            }
-
-            if (added) {
-                player.setStatus("InRoom");
-                
-                Command successCmd = new Command(Command.Type.JOIN_ROOM_SUCCESS, "SERVER", room);
-                handler.sendMessage(successCmd);
-                
-                broadcastPlayerList();
-                broadcastRoomList();
-                broadcastRoomState(room);
-            } else {
-                handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Phòng đã đầy hoặc bạn đã ở trong phòng."));
-            }
-        } else {
-            handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Không tìm thấy phòng."));
-        }
+    Player player = handler.getPlayer();
+    if (player == null || !"Online".equals(player.getStatus())) {
+        handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Bạn đang ở trong phòng khác."));
+        return;
     }
+
+    GameRoom room = findRoomById(roomId);
+    if (room != null) {
+        boolean added = false;
+        
+        // ✅ Cải tiến: Đồng bộ hóa trên danh sách người chơi (room.getPlayers())
+        synchronized (room.getPlayers()) {
+            if (room.getPlayerCount() < room.getMaxPlayers() && !room.getPlayers().contains(player)) {
+                room.getPlayers().add(player);
+                added = true;
+            }
+        }
+
+        if (added) {
+            player.setStatus("InRoom");
+            
+            view.logMessage("[JOIN] " + player.getUsername() + " joined room " + roomId);
+            view.logMessage("[JOIN] Room now has " + room.getPlayerCount() + " players: " + 
+                          room.getPlayers().stream().map(Player::getUsername).collect(Collectors.toList()));
+            
+            // ✅ Gửi room cập nhật cho client vừa join
+            Command successCmd = new Command(Command.Type.JOIN_ROOM_SUCCESS, "SERVER", room);
+            handler.sendMessage(successCmd);
+            
+            // ✅ Gửi room cập nhật cho TẤT CẢ clients trong phòng (bao gồm host)
+            broadcastRoomState(room);
+            
+            broadcastPlayerList();
+            broadcastRoomList();
+        } else {
+            handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Phòng đã đầy hoặc bạn đã ở trong phòng."));
+        }
+    } else {
+        handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Không tìm thấy phòng."));
+    }
+}
 
     public void handleLeaveRoom(ClientHandler handler, String roomId) {
         Player player = handler.getPlayer();
@@ -308,24 +320,42 @@ public class ServerControl {
         }
     }
     
-    public void broadcastRoomState(GameRoom room) {
-        Command roomStateCmd = new Command(Command.Type.UPDATE_ROOM_STATE, "SERVER", room);
-        broadcastToRoom(room, roomStateCmd, null);
-    }
-    
     private void broadcastToRoom(GameRoom room, Command command, ClientHandler exclude) {
-        List<Player> playersInRoom;
-        synchronized (room.getPlayers()) {
-            playersInRoom = new ArrayList<>(room.getPlayers());
-        }
+    List<Player> playersInRoom;
+    
+    synchronized (room.getPlayers()) {
+        playersInRoom = new ArrayList<>(room.getPlayers());
+    }
 
-        for (Player p : playersInRoom) {
-            ClientHandler handler = findClientHandler(p.getUsername());
-            if (handler != null && handler != exclude) {
-                handler.sendMessage(command);
+    view.logMessage("[BROADCAST_TO_ROOM] Room: " + room.getRoomId() + 
+                    ", Command: " + command.getType() + 
+                    ", Players in room: " + playersInRoom.size() +
+                    ", Players: " + playersInRoom.stream().map(Player::getUsername).collect(Collectors.toList()));
+    
+    for (Player p : playersInRoom) {
+        ClientHandler handler = findClientHandler(p.getUsername());
+        if (handler != null && handler != exclude) {
+            view.logMessage("[BROADCAST_TO_ROOM] Sending to " + p.getUsername());
+            handler.sendMessage(command);
+        } else {
+            if (handler == null) {
+                view.logMessage("[BROADCAST_TO_ROOM] Handler NULL for " + p.getUsername());
             }
         }
     }
+}
+
+public void broadcastRoomState(GameRoom room) {
+    // ✅ In thông tin phòng trước khi gửi
+    view.logMessage("[BROADCAST_ROOM_STATE] Room: " + room.getRoomId() + 
+                    ", Players: " + room.getPlayerCount() +
+                    ", Details: " + room.getPlayers().stream()
+                                        .map(Player::getUsername)
+                                        .collect(Collectors.toList()));
+    
+    Command roomStateCmd = new Command(Command.Type.UPDATE_ROOM_STATE, "SERVER", room);
+    broadcastToRoom(room, roomStateCmd, null);
+}
 
     private ClientHandler findClientHandler(String username) {
         synchronized (connectedClients) {

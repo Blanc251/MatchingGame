@@ -2,7 +2,6 @@ package com.matchinggame.tcp.model;
 
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,13 +19,21 @@ public class GameRoom implements Serializable {
     private List<String> readyPlayers;
     private GameState gameState;
 
+    // ✅ Constructor không tham số cho deserialization
+    public GameRoom() {
+        this.players = new ArrayList<>();
+        this.readyPlayers = new ArrayList<>();
+    }
+
     public GameRoom(String roomId, Player host, int cardCount) {
         this.roomId = roomId;
         this.host = host;
         this.cardCount = cardCount;
         this.maxPlayers = 2;
         this.status = "WAITING";
-        this.players = new ArrayList<>(Arrays.asList(host));
+        // ✅ Dùng ArrayList thay vì Collections.synchronizedList
+        this.players = new ArrayList<>();
+        this.players.add(host);
         this.readyPlayers = new ArrayList<>();
     }
     
@@ -124,5 +131,15 @@ public class GameRoom implements Serializable {
     @Override
     public int hashCode() {
         return roomId.hashCode();
+    }
+
+    @Override
+    public String toString() {
+        return "GameRoom{" +
+                "roomId='" + roomId + '\'' +
+                ", playerCount=" + players.size() +
+                ", players=" + players +
+                ", status='" + status + '\'' +
+                '}';
     }
 }

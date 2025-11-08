@@ -31,6 +31,7 @@ public class ServerControl {
     private List<GameRoom> activeRooms;
     private ServerView view;
     
+    private DatabaseManager dbManager; 
     private Map<String, Player> allPlayersData = new ConcurrentHashMap<>();
 
     private Map<String, Timer> turnTimers = Collections.synchronizedMap(new java.util.concurrent.ConcurrentHashMap<>());
@@ -42,6 +43,16 @@ public class ServerControl {
         connectedClients = Collections.synchronizedList(new ArrayList<>());
         onlinePlayers = Collections.synchronizedList(new ArrayList<>());
         activeRooms = Collections.synchronizedList(new ArrayList<>());
+        
+        dbManager = new DatabaseManager(); 
+        allPlayersData.putAll(
+            dbManager.loadAllPlayers().stream()
+                .collect(Collectors.toMap(
+                    p -> p.getUsername().toLowerCase(), 
+                    p -> p
+                ))
+        );
+        view.logMessage("Đã tải " + allPlayersData.size() + " người chơi từ cơ sở dữ liệu.");
     }
 
     public void start() {
@@ -49,8 +60,6 @@ public class ServerControl {
             serverSocket = new ServerSocket(PORT);
             view.logMessage("Server đang chạy trên cổng " + PORT + "...");
             
-            mockLoadInitialPlayers();
-
             while (true) {
                 Socket clientSocket = serverSocket.accept();
                 view.logMessage("Client mới kết nối từ: " + clientSocket.getInetAddress().getHostAddress());
@@ -63,33 +72,26 @@ public class ServerControl {
         }
     }
     
-    private void mockLoadInitialPlayers() {
-        Random rand = new Random();
-        for (int i = 0; i < 5; i++) {
-            Player p = new Player("MockUser" + i, rand.nextInt(50) * 10, "Offline");
-            p.setTotalWins(rand.nextInt(10));
-            allPlayersData.put(p.getUsername().toLowerCase(), p);
-        }
-    }
-    
-    private void mockUpdatePlayerScoreAndWins(Player player, int scoreChange, boolean isWinner) {
+    private void updatePlayerScoreAndWins(Player player, int scoreChange, boolean isWinner) {
         Player dataPlayer = allPlayersData.get(player.getUsername().toLowerCase());
         if (dataPlayer != null) {
             dataPlayer.setTotalScore(dataPlayer.getTotalScore() + scoreChange);
             if (isWinner) {
                 dataPlayer.setTotalWins(dataPlayer.getTotalWins() + 1);
             }
+            
+            dbManager.updatePlayerScoreAndWins(dataPlayer); 
         }
     }
     
-    public List<Player> getLeaderboard() {
-        synchronized (allPlayersData) {
-            return allPlayersData.values().stream()
-                    .sorted(Comparator.comparing(Player::getTotalScore, Comparator.reverseOrder())
-                            .thenComparing(Player::getTotalWins, Comparator.reverseOrder()))
-                    .collect(Collectors.toList());
-        }
+   public List<Player> getLeaderboard() {
+    synchronized (allPlayersData) {
+        return allPlayersData.values().stream()
+                .sorted(Comparator.comparing(Player::getTotalScore, Comparator.reverseOrder())
+                        .thenComparing(Player::getTotalWins, Comparator.reverseOrder()))
+                .collect(Collectors.toList());
     }
+}
 
     public boolean isUserLoggedIn(String username) {
         synchronized (onlinePlayers) {
@@ -103,10 +105,17 @@ public class ServerControl {
         if (existingPlayer != null) {
             return existingPlayer;
         } else {
-            int mockScore = new Random().nextInt(100) * 10; 
-            Player newPlayer = new Player(username, mockScore, "Offline");
-            allPlayersData.put(username.toLowerCase(), newPlayer);
-            return newPlayer;
+            Player dbPlayer = dbManager.getPlayerByUsername(username);
+            if (dbPlayer != null) {
+                allPlayersData.put(username.toLowerCase(), dbPlayer);
+                return dbPlayer;
+            } else {
+                int initialScore = 0; 
+                Player newPlayer = new Player(username, initialScore, "Offline", 0);
+                dbManager.insertPlayer(newPlayer); 
+                allPlayersData.put(username.toLowerCase(), newPlayer);
+                return newPlayer;
+            }
         }
     }
 
@@ -124,8 +133,12 @@ public class ServerControl {
     }
 
     public void removePlayer(String username) {
+        Player p = allPlayersData.get(username.toLowerCase());
+        if (p != null) {
+            p.setStatus("Offline");
+        }
         synchronized (onlinePlayers) {
-            onlinePlayers.removeIf(p -> p.getUsername().equalsIgnoreCase(username));
+            onlinePlayers.removeIf(player -> player.getUsername().equalsIgnoreCase(username));
         }
         view.removeUserFromList(username);
     }
@@ -152,8 +165,8 @@ public class ServerControl {
         view.logMessage("Broadcasting player list... (" + onlinePlayers.size() + " users online)");
         
         List<Player> lobbyPlayers;
-        synchronized (onlinePlayers) {
-            lobbyPlayers = onlinePlayers.stream()
+        synchronized (allPlayersData) {
+            lobbyPlayers = allPlayersData.values().stream()
                 .filter(p -> "Online".equals(p.getStatus()))
                 .collect(Collectors.toList());
         }
@@ -170,16 +183,16 @@ public class ServerControl {
     }
     
     public void broadcastPlayerScoreUpdate() {
-        Command command = new Command(Command.Type.UPDATE_PLAYER_SCORE, "SERVER", getLeaderboard());
-        
-        synchronized (connectedClients) {
-            for (ClientHandler client : connectedClients) {
-                if (client.getPlayer() != null) { 
-                    client.sendMessage(command);
-                }
+    Command command = new Command(Command.Type.UPDATE_PLAYER_SCORE, "SERVER", getLeaderboard());
+    
+    synchronized (connectedClients) {
+        for (ClientHandler client : connectedClients) {
+            if (client.getPlayer() != null) { 
+                client.sendMessage(command);
             }
         }
     }
+}
     
     public ArrayList<Player> getOnlinePlayers() {
         synchronized (onlinePlayers) {
@@ -188,7 +201,7 @@ public class ServerControl {
     }
 
     public void logError(String error) {
-        view.logMessage("[ERROR] " + error);
+        view.logMessage("[ERROR] + " + error);
     }
     
     public void handleCreateRoom(ClientHandler handler, int cardCount) {
@@ -338,7 +351,12 @@ public class ServerControl {
                     .findFirst().orElse(null);
             
             if (winner != null) {
-                mockUpdatePlayerScoreAndWins(winner, 5, true); 
+                int winnerMatchScore = room.getGameState().getScores().getOrDefault(winner.getUsername(), 0);
+                int bonusScore = 5;
+                
+                updatePlayerScoreAndWins(winner, winnerMatchScore + bonusScore, true); 
+                updatePlayerScoreAndWins(player, 0, false); 
+
                 room.getGameState().setMessage(player.getUsername() + " đã thoát! " + winner.getUsername() + " chiến thắng!");
                 room.getGameState().setGameStatus("FINISHED");
                 Command endCmd = new Command(Command.Type.GAME_OVER, "SERVER", room.getGameState());
@@ -709,40 +727,38 @@ public void broadcastRoomState(GameRoom room) {
         delayTimer.schedule(new TimerTask() {
             @Override
             public void run() {
+                String currentMessage;
+                
                 if (card1.equals(card2)) {
                     gameState.setCardMatched(flippedIndices[0], true);
                     gameState.setCardMatched(flippedIndices[1], true);
                     
                     Map<String, Integer> scores = gameState.getScores();
-                    scores.put(player.getUsername(), scores.get(player.getUsername()) + 1);
+                    scores.put(player.getUsername(), scores.get(player.getUsername()) + 10);
                     
                     if (isGameFinished(gameState)) {
                         handleGameOver(room, scores);
-                    } else {
-                        gameState.setMessage(player.getUsername() + " ăn điểm! Bạn được đi tiếp.");
-                        Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
-                        broadcastToRoom(room, updateCmd, null);
-                        
-                        flipCountMap.put(room.getRoomId(), 0);
-                        flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
-                        startTurnTimer(room);
+                        return; 
                     }
                     
+                    currentMessage = player.getUsername() + " ăn điểm!";
                 } else {
-                    // CẬP NHẬT: Lật úp 2 thẻ bài
                     gameState.setCardFlipped(flippedIndices[0], false);
                     gameState.setCardFlipped(flippedIndices[1], false);
                     
-                    switchPlayerTurn(room);
-                    gameState.setMessage("Không khớp! Lượt của " + gameState.getCurrentPlayerUsername());
-                    
-                    Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
-                    broadcastToRoom(room, updateCmd, null);
-                    
-                    flipCountMap.put(room.getRoomId(), 0);
-                    flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
-                    startTurnTimer(room);
+                    currentMessage = "Không khớp!";
                 }
+                
+                switchPlayerTurn(room);
+                
+                gameState.setMessage(currentMessage + " Lượt của " + gameState.getCurrentPlayerUsername());
+                
+                Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
+                broadcastToRoom(room, updateCmd, null);
+                
+                flipCountMap.put(room.getRoomId(), 0);
+                flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
+                startTurnTimer(room);
             }
         }, 2000);
     }
@@ -751,21 +767,39 @@ public void broadcastRoomState(GameRoom room) {
         room.setStatus("FINISHED");
         room.getGameState().setGameStatus("FINISHED");
         
-        Map.Entry<String, Integer> winnerEntry = Collections.max(finalScores.entrySet(), Map.Entry.comparingByValue());
+        List<Map.Entry<String, Integer>> sortedScores = finalScores.entrySet().stream()
+                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+                .collect(Collectors.toList());
         
-        String winnerName = winnerEntry.getKey();
-        int winnerScore = winnerEntry.getValue();
+        String winnerName = sortedScores.get(0).getKey();
+        int winnerScore = sortedScores.get(0).getValue();
+        int opponentScore = (sortedScores.size() > 1) ? sortedScores.get(1).getValue() : 0;
         
         String message = "Trò chơi kết thúc!";
         
+        boolean isDraw = (sortedScores.size() > 1) && (winnerScore == opponentScore);
+        
+        if (isDraw) {
+            message = "Trò chơi kết thúc! Hòa với số điểm " + winnerScore;
+        } else {
+            message = "Trò chơi kết thúc! " + winnerName + " chiến thắng với " + winnerScore + " điểm!";
+        }
+        
         for (Player p : room.getPlayers()) {
-            boolean isWinner = p.getUsername().equals(winnerName);
-            int scoreChange = finalScores.get(p.getUsername());
-            mockUpdatePlayerScoreAndWins(p, scoreChange, isWinner);
+            boolean isWinner = false;
+            int matchScore = finalScores.getOrDefault(p.getUsername(), 0);
+            int bonusScore = 0;
+
+            if (isDraw) {
             
-            if (isWinner) {
-                message = "Trò chơi kết thúc! " + winnerName + " chiến thắng với " + winnerScore + " điểm!";
+            } else if (p.getUsername().equals(winnerName)) {
+                isWinner = true;
+                bonusScore = 10;
             }
+            
+            int dbScoreChange = matchScore + bonusScore;
+            
+            updatePlayerScoreAndWins(p, dbScoreChange, isWinner); 
         }
         
         room.getGameState().setMessage(message);

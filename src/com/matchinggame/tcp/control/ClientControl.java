@@ -14,7 +14,7 @@ public class ClientControl {
     private ObjectInputStream ois;
     private ClientView clientView;
 
-    private final String SERVER_IP = "localhost"; 
+    private final String SERVER_IP = "192.168.100.209"; 
     private final int PORT = 9999;
 
     public ClientControl(ClientView view) {

@@ -49,6 +49,9 @@ public class ClientView extends JFrame {
     private DefaultListModel<String> roomListModel;
     private JButton createRoomButton;
     
+    private JList<String> leaderboardList;
+    private DefaultListModel<String> leaderboardListModel;
+    
     private JPopupMenu playerContextMenu;
     private JMenuItem inviteMenuItem;
 
@@ -74,7 +77,7 @@ public class ClientView extends JFrame {
     public ClientView() {
         super("Game Lobby");
         setDefaultCloseOperation(EXIT_ON_CLOSE);
-        setSize(700, 500);
+        setSize(600, 400);
         setLocationRelativeTo(null);
 
         clientControl = new ClientControl(this);
@@ -101,8 +104,10 @@ public class ClientView extends JFrame {
         JPanel centerPanel = new JPanel(new FlowLayout());
         
         usernameField = new JTextField(10);
+        usernameField.setFont(new Font("Arial", Font.PLAIN, 12));
         usernameField.setText("User" + (new java.util.Random().nextInt(100)));
         connectButton = new JButton("Connect & Login");
+        connectButton.setFont(new Font("Arial", Font.BOLD, 12));
         connectButton.addActionListener(new ConnectListener());
         
         centerPanel.add(new JLabel("Username:"));
@@ -114,13 +119,18 @@ public class ClientView extends JFrame {
     private void initLobbyPanel() {
         lobbyPanel = new JPanel(new BorderLayout());
         
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
-        splitPane.setResizeWeight(0.5);
+        JSplitPane mainSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
+        mainSplitPane.setResizeWeight(0.7);
 
+        JPanel leftPanel = new JPanel(new BorderLayout());
+        JSplitPane leftSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+        leftSplitPane.setResizeWeight(0.5);
+        
         JPanel playerSection = new JPanel(new BorderLayout());
         playerSection.setBorder(new TitledBorder("Online Players"));
         playerListModel = new DefaultListModel<>();
         playerList = new JList<>(playerListModel);
+        playerList.setFont(new Font("Arial", Font.PLAIN, 18));
         
         createPlayerContextMenu();
         playerList.addMouseListener(new MouseAdapter() {
@@ -134,13 +144,13 @@ public class ClientView extends JFrame {
                 }
             }
         });
-        
         playerSection.add(new JScrollPane(playerList), BorderLayout.CENTER);
         
         JPanel roomSection = new JPanel(new BorderLayout());
         roomSection.setBorder(new TitledBorder("Available Rooms"));
         roomListModel = new DefaultListModel<>();
         roomList = new JList<>(roomListModel);
+        roomList.setFont(new Font("Arial", Font.PLAIN, 18));
         roomList.addMouseListener(new MouseAdapter() {
             public void mouseClicked(MouseEvent evt) {
                 if (evt.getClickCount() == 2) {
@@ -150,24 +160,35 @@ public class ClientView extends JFrame {
         });
         roomSection.add(new JScrollPane(roomList), BorderLayout.CENTER);
         createRoomButton = new JButton("Tạo phòng (Tự chơi)");
+        createRoomButton.setFont(new Font("Arial", Font.BOLD, 18));
         createRoomButton.addActionListener(e -> showCreateRoomDialog(null));
         roomSection.add(createRoomButton, BorderLayout.SOUTH);
-
-        splitPane.setLeftComponent(playerSection);
-        splitPane.setRightComponent(roomSection);
         
-        lobbyPanel.add(splitPane, BorderLayout.CENTER);
+        leftSplitPane.setTopComponent(playerSection);
+        leftSplitPane.setBottomComponent(roomSection);
+        leftPanel.add(leftSplitPane, BorderLayout.CENTER);
+        
+        JPanel leaderboardSection = new JPanel(new BorderLayout());
+        leaderboardSection.setBorder(new TitledBorder("Bảng xếp hạng (Điểm | Thắng)"));
+        leaderboardListModel = new DefaultListModel<>();
+        leaderboardList = new JList<>(leaderboardListModel);
+        leaderboardList.setFont(new Font("Arial", Font.PLAIN, 18));
+        leaderboardSection.add(new JScrollPane(leaderboardList), BorderLayout.CENTER);
+
+        mainSplitPane.setLeftComponent(leftPanel);
+        mainSplitPane.setRightComponent(leaderboardSection);
+        
+        lobbyPanel.add(mainSplitPane, BorderLayout.CENTER);
     }
     
     private void createPlayerContextMenu() {
         playerContextMenu = new JPopupMenu();
-        inviteMenuItem = new JMenuItem("Mời chơi");
+        JMenuItem inviteMenuItem = new JMenuItem("Mời chơi");
         inviteMenuItem.addActionListener(e -> {
-            String targetUsername = playerList.getSelectedValue();
-            if (targetUsername != null && !targetUsername.isEmpty()) {
-                if(targetUsername.endsWith(" (Me)")) {
-                    targetUsername = targetUsername.substring(0, targetUsername.length() - 5);
-                }
+            String selectedValue = playerList.getSelectedValue();
+            if (selectedValue != null && !selectedValue.isEmpty()) {
+                String targetUsername = selectedValue.substring(0, selectedValue.indexOf(" "));
+                
                 showCreateRoomDialog(targetUsername);
             }
         });
@@ -179,18 +200,25 @@ public class ClientView extends JFrame {
         
         JPanel roomInfoPanel = new JPanel(new BorderLayout());
         roomInfoPanel.setBorder(new TitledBorder("Phòng chờ"));
+        roomInfoPanel.setPreferredSize(new Dimension(400, 0));
 
         roomNameLabel = new JLabel("Phòng: ");
+        roomNameLabel.setFont(new Font("Arial", Font.BOLD, 22));
         roomInfoPanel.add(roomNameLabel, BorderLayout.NORTH);
         
         roomPlayerListModel = new DefaultListModel<>();
         roomPlayerList = new JList<>(roomPlayerListModel);
+        roomPlayerList.setFont(new Font("Arial", Font.PLAIN, 18));
         roomInfoPanel.add(new JScrollPane(roomPlayerList), BorderLayout.CENTER);
         
         JPanel buttonPanel = new JPanel(new FlowLayout());
         readyButton = new JButton("Sẵn sàng");
         startGameButton = new JButton("Bắt đầu chơi");
         leaveRoomButton = new JButton("Rời phòng");
+        
+        readyButton.setFont(new Font("Arial", Font.BOLD, 18));
+        startGameButton.setFont(new Font("Arial", Font.BOLD, 18));
+        leaveRoomButton.setFont(new Font("Arial", Font.BOLD, 18));
         
         readyButton.addActionListener(e -> clientControl.sendCommand(new Command(Command.Type.PLAYER_READY, currentUsername, currentRoom.getRoomId())));
         startGameButton.addActionListener(e -> clientControl.sendCommand(new Command(Command.Type.START_GAME, currentUsername, currentRoom.getRoomId())));
@@ -200,7 +228,6 @@ public class ClientView extends JFrame {
         buttonPanel.add(startGameButton);
         buttonPanel.add(leaveRoomButton);
         roomInfoPanel.add(buttonPanel, BorderLayout.SOUTH);
-        roomInfoPanel.setPreferredSize(new Dimension(200, 0));
         
         gamePanel.add(roomInfoPanel, BorderLayout.WEST);
 
@@ -215,6 +242,11 @@ public class ClientView extends JFrame {
         turnStatusLabel = new JLabel("Đang chờ...");
         countdownLabel = new JLabel("Sẵn sàng...");
         
+        player1ScoreLabel.setFont(new Font("Arial", Font.BOLD, 22));
+        player2ScoreLabel.setFont(new Font("Arial", Font.BOLD, 22));
+        turnStatusLabel.setFont(new Font("Arial", Font.BOLD, 22));
+        countdownLabel.setFont(new Font("Arial", Font.BOLD, 22));
+        
         player1ScoreLabel.setHorizontalAlignment(SwingConstants.CENTER);
         player2ScoreLabel.setHorizontalAlignment(SwingConstants.CENTER);
         turnStatusLabel.setHorizontalAlignment(SwingConstants.CENTER);
@@ -226,26 +258,24 @@ public class ClientView extends JFrame {
         
         centerGamePanel.add(topGamePanel, BorderLayout.NORTH);
         
-        // --- KHỞI TẠO VÀ SỬ DỤNG gameControlPanel ĐÚNG CÁCH ---
-        
-        // Khởi tạo gameControlPanel (Fix NPE)
         gameControlPanel = new JPanel(new FlowLayout());
         quitGameButton = new JButton("Thoát");
+        quitGameButton.setFont(new Font("Arial", Font.BOLD, 18));
         quitGameButton.addActionListener(e -> quitGame());
         gameControlPanel.add(quitGameButton);
         
-        // Tạo panel chứa cả Countdown và GameControlPanel ở phía South
         JPanel southPanel = new JPanel(new BorderLayout());
         southPanel.add(countdownLabel, BorderLayout.NORTH);
         southPanel.add(gameControlPanel, BorderLayout.CENTER);
 
         centerGamePanel.add(southPanel, BorderLayout.SOUTH);
-        // -----------------------------------------------------------
         
         gamePanel.add(centerGamePanel, BorderLayout.CENTER);
     }
     
     private void showLobbyView() {
+        this.setSize(1400, 1000);
+        this.setLocationRelativeTo(null);
         currentRoom = null;
         currentGameState = null;
         mainLayout.show(mainPanel, "LOBBY");
@@ -253,6 +283,8 @@ public class ClientView extends JFrame {
     }
     
     private void showGameRoomView(GameRoom room) {
+        this.setSize(1400, 1000);
+        this.setLocationRelativeTo(null);
         currentRoom = room;
         mainLayout.show(mainPanel, "GAME");
         updateRoomState(room);
@@ -362,32 +394,37 @@ public class ClientView extends JFrame {
     }
     
     private void updateLeaderboard(List<Player> leaderboard) {
-        if (!leaderboard.isEmpty()) {
-            Player topPlayer = leaderboard.get(0);
-            System.out.println("Leader: " + topPlayer.getUsername() + ", Score: " + topPlayer.getTotalScore() + ", Wins: " + topPlayer.getTotalWins());
+        leaderboardListModel.clear();
+        int rank = 1;
+        for (Player p : leaderboard) {
+            String displayText = String.format("%d. %s (Điểm: %d, Thắng: %d)", 
+                                                rank++, 
+                                                p.getUsername(), 
+                                                p.getTotalScore(), 
+                                                p.getTotalWins());
+            leaderboardListModel.addElement(displayText);
         }
     }
     
     private void showGameOverDialog(String message) {
-        int choice = JOptionPane.showConfirmDialog(this, 
-                message + "\n\nChơi lại?",
-                "Ván chơi kết thúc", 
-                JOptionPane.YES_NO_OPTION);
-        
-        if (choice == JOptionPane.YES_OPTION) {
+        boolean isHost = currentUsername.equalsIgnoreCase(currentRoom.getHost().getUsername());
+
+        if (isHost) {
+            countdownLabel.setText(message + ". Đã gửi yêu cầu chơi lại, chờ khách...");
             clientControl.sendCommand(new Command(Command.Type.REMATCH_REQUEST, currentUsername, null));
         } else {
-            leaveCurrentRoom();
+            countdownLabel.setText(message + ". Đang chờ yêu cầu từ chủ phòng...");
         }
     }
     
     private void updatePlayerList(ArrayList<Player> players) {
         playerListModel.clear();
         for (Player p : players) {
-            if (p.getUsername().equalsIgnoreCase(currentUsername)) {
-                 playerListModel.addElement(p.getUsername() + " (Me)");
-            } else {
-                 playerListModel.addElement(p.getUsername());
+            if (!p.getUsername().equalsIgnoreCase(currentUsername)) {
+                 String displayText = String.format("%s (Điểm: %d, Trạng thái: Online)", 
+                                                p.getUsername(), 
+                                                p.getTotalScore());
+                 playerListModel.addElement(displayText);
             }
         }
     }
@@ -463,13 +500,13 @@ public class ClientView extends JFrame {
         
         int cardCount = state.getCardValues().size();
         int gridSize = (int) Math.ceil(Math.sqrt(cardCount));
-        gameBoardPanel.setLayout(new GridLayout(gridSize, gridSize, 5, 5));
+        gameBoardPanel.setLayout(new GridLayout(gridSize, gridSize, 10, 10));
         
         if (cardButtons.size() != cardCount) {
             cardButtons.clear();
             for (int i = 0; i < cardCount; i++) {
                 JButton cardButton = new JButton("?");
-                cardButton.setFont(new Font("Arial", Font.BOLD, 24));
+                cardButton.setFont(new Font("Arial", Font.BOLD, 48));
                 final int index = i;
                 cardButton.addActionListener(e -> onCardFlipped(index));
                 cardButtons.add(cardButton);
@@ -606,6 +643,9 @@ public class ClientView extends JFrame {
         resetLoginControls();
         mainLayout.show(mainPanel, "LOGIN");
         setTitle("Game Lobby");
+        
+        this.setSize(600, 400); 
+        this.setLocationRelativeTo(null);
     }
 
     private class ConnectListener implements ActionListener {
@@ -618,6 +658,8 @@ public class ClientView extends JFrame {
             }
             connectButton.setEnabled(false);
             usernameField.setEditable(false);
+            
+            ClientView.this.setLocationRelativeTo(null);
 
             new Thread(new Runnable() {
                 @Override

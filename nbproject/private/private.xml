@@ -9,6 +9,13 @@
             <file>file:/C:/Users/vuivd/Documents/NetBeansProjects/MatchingGame/src/com/matchinggame/tcp/control/ClientHandler.java</file>
             <file>file:/C:/Users/vuivd/Documents/NetBeansProjects/MatchingGame/src/com/matchinggame/tcp/view/ClientView.java</file>
             <file>file:/C:/Users/vuivd/Documents/NetBeansProjects/MatchingGame/src/com/matchinggame/tcp/ClientRun.java</file>
+            <file>file:/C:/Users/vuivd/Documents/NetBeansProjects/MatchingGame/src/com/matchinggame/tcp/model/Command.java</file>
+            <file>file:/C:/Users/vuivd/Documents/NetBeansProjects/MatchingGame/src/com/matchinggame/tcp/view/ServerView.java</file>
+            <file>file:/C:/Users/vuivd/Documents/NetBeansProjects/MatchingGame/src/com/matchinggame/tcp/model/Player.java</file>
+            <file>file:/C:/Users/vuivd/Documents/NetBeansProjects/MatchingGame/src/com/matchinggame/tcp/model/GameRoom.java</file>
+            <file>file:/C:/Users/vuivd/Documents/NetBeansProjects/MatchingGame/src/com/matchinggame/tcp/model/InviteData.java</file>
+            <file>file:/C:/Users/vuivd/Documents/NetBeansProjects/MatchingGame/src/com/matchinggame/tcp/model/GameState.java</file>
+            <file>file:/C:/Users/vuivd/Documents/NetBeansProjects/MatchingGame/src/com/matchinggame/tcp/model/FlipData.java</file>
         </group>
     </open-files>
 </project-private>

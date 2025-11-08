@@ -17,6 +17,13 @@ public class Player implements Serializable {
         this.status = status;
         this.totalWins = 0;
     }
+    
+    public Player(String username, int totalScore, String status, int totalWins) {
+        this.username = username;
+        this.totalScore = totalScore;
+        this.status = status;
+        this.totalWins = totalWins;
+    }
 
     public String getUsername() {
         return username;

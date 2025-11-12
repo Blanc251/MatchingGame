@@ -52,9 +52,9 @@ public class ClientHandler extends Thread {
             String tempUsername = (String) command.getData();
             
             if (serverControl.isUserLoggedIn(tempUsername)) {
-                String errorMsg = "LỖI ĐĂNG NHẬP: " + clientSocket.getInetAddress().getHostAddress() + " - Username đã tồn tại: " + tempUsername;
+                String errorMsg = "LOGIN ERROR: " + clientSocket.getInetAddress().getHostAddress() + " - Username already exists: " + tempUsername;
                 serverControl.logError(errorMsg); 
-                sendMessage(new Command(Type.LOGIN, "SERVER", "Lỗi: Tài khoản " + tempUsername + " đã đăng nhập."));
+                sendMessage(new Command(Type.LOGIN, "SERVER", "Error: Account " + tempUsername + " is already logged in."));
                 closeConnection();
                 return;
             }
@@ -70,7 +70,7 @@ public class ClientHandler extends Thread {
         } 
         
         if (player == null) {
-            sendMessage(new Command(Type.LOGIN, "SERVER", "Lỗi: Vui lòng đăng nhập trước."));
+            sendMessage(new Command(Type.LOGIN, "SERVER", "Error: Please login first."));
             closeConnection();
             return;
         }
@@ -138,7 +138,7 @@ public class ClientHandler extends Thread {
                 break;
                 
             default:
-                serverControl.logError("Nhận lệnh không xác định từ " + player.getUsername() + ": " + command.getType());
+                serverControl.logError("Received unknown command from " + player.getUsername() + ": " + command.getType());
                 break;
         }
     }
@@ -150,7 +150,7 @@ public class ClientHandler extends Thread {
             oos.writeObject(object);
             oos.flush();
         } catch (IOException e) {
-            serverControl.logError("Không gửi được tin nhắn tới " + (player != null ? player.getUsername() : "client chưa đăng nhập"));
+            serverControl.logError("Failed to send message to " + (player != null ? player.getUsername() : "unauthenticated client"));
             closeConnection();
         }
     }

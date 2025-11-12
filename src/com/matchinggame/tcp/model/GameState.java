@@ -16,6 +16,9 @@ public class GameState implements Serializable {
     private String currentPlayerUsername;
     private String gameStatus;
     private String message;
+    
+    private long turnStartTime;
+    private int turnDuration;
 
     public GameState(String roomId, List<String> cardValues, Map<String, Integer> scores, int cardCount) {
         this.roomId = roomId;
@@ -24,6 +27,7 @@ public class GameState implements Serializable {
         this.cardFlipped = new boolean[cardCount];
         this.cardMatched = new boolean[cardCount];
         this.gameStatus = "WAITING";
+        this.turnDuration = 0;
     }
 
     public String getRoomId() {
@@ -80,5 +84,21 @@ public class GameState implements Serializable {
 
     public void setMessage(String message) {
         this.message = message;
+    }
+    
+    public long getTurnStartTime() {
+        return turnStartTime;
+    }
+
+    public void setTurnStartTime(long turnStartTime) {
+        this.turnStartTime = turnStartTime;
+    }
+
+    public int getTurnDuration() {
+        return turnDuration;
+    }
+
+    public void setTurnDuration(int turnDuration) {
+        this.turnDuration = turnDuration;
     }
 }

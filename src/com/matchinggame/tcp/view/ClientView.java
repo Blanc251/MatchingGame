@@ -55,8 +55,8 @@ public class ClientView extends JFrame {
     private DefaultListModel<String> roomListModel;
     private JButton createRoomButton;
     
-    private JList<String> leaderboardList;
-    private DefaultListModel<String> leaderboardListModel;
+    private JList<Player> leaderboardList;
+    private DefaultListModel<Player> leaderboardListModel;
     
     private JPopupMenu playerContextMenu;
     private JMenuItem inviteMenuItem;
@@ -86,8 +86,9 @@ public class ClientView extends JFrame {
     private JProgressBar turnTimerBar;
     private javax.swing.Timer swingTurnTimer;
     private javax.swing.Timer swingPrepareTimer;
-    private int remainingTime;
-    private static final int TURN_DURATION = 10;
+    private int turnTimeRemaining;
+    private int prepareTimeRemaining;
+    private static final int TURN_DURATION_SEC = 10;
     private static final int PREPARE_DURATION = 2;
     private int clientFlipCount = 0;
 
@@ -134,33 +135,34 @@ public class ClientView extends JFrame {
     }
     
     private void initTimer() {
-        remainingTime = TURN_DURATION;
+        turnTimeRemaining = TURN_DURATION_SEC;
         
         swingTurnTimer = new javax.swing.Timer(1000, new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                remainingTime--;
-                turnTimerBar.setValue(remainingTime);
-                turnTimerBar.setString(remainingTime + "s");
+                turnTimeRemaining--;
+                turnTimerBar.setValue(turnTimeRemaining);
+                turnTimerBar.setString(turnTimeRemaining + "s");
 
-                if (remainingTime <= 3) {
+                if (turnTimeRemaining <= 3) {
                     turnTimerBar.setForeground(SOFT_RED);
                 }
 
-                if (remainingTime <= 0) {
+                if (turnTimeRemaining <= 0) {
                     swingTurnTimer.stop();
                 }
             }
         });
         
+        prepareTimeRemaining = PREPARE_DURATION;
         swingPrepareTimer = new javax.swing.Timer(1000, new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                remainingTime--;
-                turnTimerBar.setValue(remainingTime);
-                turnTimerBar.setString(remainingTime + "s");
+                prepareTimeRemaining--;
+                turnTimerBar.setValue(prepareTimeRemaining);
+                turnTimerBar.setString(prepareTimeRemaining + "s");
                 
-                if (remainingTime <= 0) {
+                if (prepareTimeRemaining <= 0) {
                     swingPrepareTimer.stop();
                 }
             }
@@ -292,10 +294,11 @@ public class ClientView extends JFrame {
         
         JPanel leaderboardSection = new JPanel(new BorderLayout());
         leaderboardSection.setBackground(CHARCOAL_BLUE);
-        leaderboardSection.setBorder(createThemedTitledBorder("Leaderboard (Score | Wins)"));
+        leaderboardSection.setBorder(createThemedTitledBorder("Leaderboard"));
         leaderboardListModel = new DefaultListModel<>();
         leaderboardList = new JList<>(leaderboardListModel);
         styleList(leaderboardList);
+        leaderboardList.setCellRenderer(new LeaderboardListRenderer());
         JScrollPane leaderboardScrollPane = new JScrollPane(leaderboardList);
         leaderboardScrollPane.setBorder(null);
         leaderboardSection.add(leaderboardScrollPane, BorderLayout.CENTER);
@@ -423,10 +426,10 @@ public class ClientView extends JFrame {
         countdownLabel.setForeground(LIGHT_GREY);
         countdownLabel.setHorizontalAlignment(SwingConstants.CENTER);
         
-        turnTimerBar = new JProgressBar(0, TURN_DURATION);
-        turnTimerBar.setValue(TURN_DURATION);
+        turnTimerBar = new JProgressBar(0, TURN_DURATION_SEC);
+        turnTimerBar.setValue(TURN_DURATION_SEC);
         turnTimerBar.setStringPainted(true);
-        turnTimerBar.setString(TURN_DURATION + "s");
+        turnTimerBar.setString(TURN_DURATION_SEC + "s");
         turnTimerBar.setFont(FONT_MAIN_BOLD);
         turnTimerBar.setForeground(CLEAR_GREEN);
         turnTimerBar.setBackground(GREY_BLUE);
@@ -550,13 +553,13 @@ public class ClientView extends JFrame {
             case GAME_UPDATE:
                 GameState state = (GameState) command.getData();
                 String msg = state.getMessage();
-                boolean myTurn = state.getCurrentPlayerUsername().equalsIgnoreCase(currentUsername);
 
                 if (msg.startsWith("Get Ready!")) {
                     stopAllTimers();
-                } else if (myTurn && msg.contains("flipped 1 card")) {
                 } else {
-                    stopAllTimers();
+                    if (swingPrepareTimer.isRunning()) {
+                        swingPrepareTimer.stop();
+                    }
                 }
                 
                 currentGameState = state;
@@ -609,14 +612,8 @@ public class ClientView extends JFrame {
     
     private void updateLeaderboard(List<Player> leaderboard) {
         leaderboardListModel.clear();
-        int rank = 1;
         for (Player p : leaderboard) {
-            String displayText = String.format("%d. %s (Score: %d, Wins: %d)", 
-                                                rank++, 
-                                                p.getUsername(), 
-                                                p.getTotalScore(), 
-                                                p.getTotalWins());
-            leaderboardListModel.addElement(displayText);
+            leaderboardListModel.addElement(p);
         }
     }
     
@@ -825,7 +822,6 @@ public class ClientView extends JFrame {
         
         turnStatusLabel.setText("Turn: " + state.getCurrentPlayerUsername());
         turnStatusLabel.setForeground(myTurn ? VIBRANT_TEAL : WARM_ORANGE);
-        countdownLabel.setText(msg);
         
         if (!state.getGameStatus().equals("PLAYING")) {
             stopAllTimers();
@@ -835,39 +831,47 @@ public class ClientView extends JFrame {
             
         } else if (msg.startsWith("Get Ready!")) {
             stopAllTimers();
+            countdownLabel.setText(msg);
             countdownLabel.setForeground(LIGHT_GREY);
-            remainingTime = PREPARE_DURATION;
+            
+            prepareTimeRemaining = PREPARE_DURATION;
             turnTimerBar.setMaximum(PREPARE_DURATION);
-            turnTimerBar.setValue(remainingTime);
-            turnTimerBar.setString(remainingTime + "s");
+            turnTimerBar.setValue(prepareTimeRemaining);
+            turnTimerBar.setString(prepareTimeRemaining + "s");
             turnTimerBar.setForeground(VIBRANT_TEAL);
             turnTimerBar.setVisible(true);
             swingPrepareTimer.start();
             
-        } else if (myTurn) {
-            countdownLabel.setText("YOUR TURN! " + msg);
-            countdownLabel.setForeground(WARM_ORANGE);
-             
-            if (msg.startsWith("GO!")) {
-                stopAllTimers();
-                clientFlipCount = 0;
-                remainingTime = TURN_DURATION;
-                turnTimerBar.setMaximum(TURN_DURATION);
-                turnTimerBar.setValue(remainingTime);
-                turnTimerBar.setString(remainingTime + "s");
-                turnTimerBar.setForeground(CLEAR_GREEN);
-                turnTimerBar.setVisible(true);
-                swingTurnTimer.start();
-            } else if (msg.contains("flipped 1 card")) {
-                clientFlipCount = 1;
-                turnTimerBar.setVisible(true);
-            }
-             
         } else {
-            stopAllTimers();
-             countdownLabel.setText("Waiting for opponent... " + msg);
-             countdownLabel.setForeground(LIGHT_GREY);
-             turnTimerBar.setVisible(false);
+            stopAllTimers(); 
+            
+            if (myTurn) {
+                countdownLabel.setText("YOUR TURN! " + msg);
+                countdownLabel.setForeground(WARM_ORANGE);
+                if (msg.startsWith("GO!")) {
+                    clientFlipCount = 0;
+                } else if (msg.contains("flipped 1 card")) {
+                    clientFlipCount = 1;
+                }
+            } else {
+                 countdownLabel.setText("Waiting for opponent... " + msg);
+                 countdownLabel.setForeground(LIGHT_GREY);
+            }
+
+            turnTimerBar.setVisible(true);
+            
+            turnTimeRemaining = TURN_DURATION_SEC;
+            int durationSec = state.getTurnDuration() / 1000;
+            if (durationSec > 0) {
+                turnTimeRemaining = durationSec;
+            }
+            
+            turnTimerBar.setMaximum(turnTimeRemaining);
+            turnTimerBar.setValue(turnTimeRemaining);
+            turnTimerBar.setString(turnTimeRemaining + "s");
+            turnTimerBar.setForeground(CLEAR_GREEN);
+            
+            swingTurnTimer.start();
         }
 
         Map<String, Integer> scores = state.getScores();
@@ -929,7 +933,6 @@ public class ClientView extends JFrame {
         if (currentGameState != null && currentGameState.getGameStatus().equals("PLAYING")) {
             
             if (clientFlipCount == 1) {
-                stopAllTimers();
                 clientFlipCount = 0;
             } else {
                 clientFlipCount++;
@@ -1221,6 +1224,61 @@ public class ClientView extends JFrame {
             }
             
             return c;
+        }
+    }
+    
+    private class LeaderboardListRenderer extends JPanel implements ListCellRenderer<Player> {
+        private JLabel rankLabel;
+        private JLabel nameLabel;
+        private JLabel statsLabel;
+
+        public LeaderboardListRenderer() {
+            setLayout(new BorderLayout(10, 0));
+            setBackground(GREY_BLUE);
+            setOpaque(true);
+            setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
+
+            rankLabel = new JLabel();
+            rankLabel.setFont(FONT_MAIN_BOLD.deriveFont(18f));
+            rankLabel.setForeground(WARM_ORANGE);
+            rankLabel.setOpaque(false);
+            rankLabel.setPreferredSize(new Dimension(40, 0)); 
+
+            nameLabel = new JLabel();
+            nameLabel.setFont(FONT_MAIN_PLAIN.deriveFont(18f));
+            nameLabel.setForeground(OFF_WHITE);
+            nameLabel.setOpaque(false);
+            
+            statsLabel = new JLabel();
+            statsLabel.setFont(FONT_MAIN_PLAIN.deriveFont(16f));
+            statsLabel.setForeground(LIGHT_GREY);
+            statsLabel.setOpaque(false);
+
+            add(rankLabel, BorderLayout.WEST);
+            add(nameLabel, BorderLayout.CENTER);
+            add(statsLabel, BorderLayout.EAST);
+        }
+
+        @Override
+        public Component getListCellRendererComponent(JList<? extends Player> list, Player player, int index, boolean isSelected, boolean cellHasFocus) {
+            
+            rankLabel.setText(String.format("%d.", index + 1));
+            nameLabel.setText(player.getUsername());
+            statsLabel.setText(String.format("Score: %d | Wins: %d", player.getTotalScore(), player.getTotalWins()));
+            
+            if (isSelected) {
+                setBackground(VIBRANT_TEAL);
+                rankLabel.setForeground(OFF_WHITE);
+                nameLabel.setForeground(OFF_WHITE);
+                statsLabel.setForeground(OFF_WHITE);
+            } else {
+                setBackground(GREY_BLUE);
+                rankLabel.setForeground(WARM_ORANGE);
+                nameLabel.setForeground(OFF_WHITE);
+                statsLabel.setForeground(LIGHT_GREY);
+            }
+            
+            return this;
         }
     }
 }

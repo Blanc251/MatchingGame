@@ -37,7 +37,8 @@ public class ServerControl {
     private Map<String, Timer> turnTimers = Collections.synchronizedMap(new java.util.concurrent.ConcurrentHashMap<>());
     private Map<String, int[]> flippedCardsMap = Collections.synchronizedMap(new java.util.concurrent.ConcurrentHashMap<>());
     private Map<String, Integer> flipCountMap = Collections.synchronizedMap(new java.util.concurrent.ConcurrentHashMap<>());
-    private static final int PREPARE_DELAY_MS = 2000;
+
+    private static final int TURN_DURATION_MS = 10000;
 
     public ServerControl(ServerView view) {
         this.view = view;
@@ -53,7 +54,7 @@ public class ServerControl {
                     p -> p
                 ))
         );
-        view.logMessage("Loaded " + allPlayersData.size() + " players from database.");
+        view.logMessage("Loaded " + allPlayersData.size() + " players from the database.");
     }
 
     public void start() {
@@ -163,14 +164,16 @@ public class ServerControl {
     }
 
     public void broadcastPlayerList() {
-        view.logMessage("Broadcasting player list... (" + allPlayersData.size() + " total players)");
+        view.logMessage("Broadcasting player list... (" + onlinePlayers.size() + " users online)");
         
         List<Player> lobbyPlayers;
         synchronized (allPlayersData) {
-            lobbyPlayers = new ArrayList<>(allPlayersData.values());
+            lobbyPlayers = allPlayersData.values().stream()
+                .filter(p -> "Online".equals(p.getStatus()))
+                .collect(Collectors.toList());
         }
             
-        Command command = new Command(Command.Type.UPDATE_PLAYER_LIST, "SERVER", lobbyPlayers);
+        Command command = new Command(Command.Type.UPDATE_PLAYER_LIST, "SERVER", new ArrayList<>(lobbyPlayers));
         
         synchronized (connectedClients) {
             for (ClientHandler client : connectedClients) {
@@ -263,7 +266,7 @@ public class ServerControl {
         
         if (hostHandler != null) {
             String targetUsername = targetHandler.getPlayer().getUsername();
-            Command declineNotif = new Command(Command.Type.RECEIVE_INVITE_DECLINED, targetUsername, "Player " + targetUsername + " declined your invite.");
+            Command declineNotif = new Command(Command.Type.RECEIVE_INVITE_DECLINED, targetUsername, "Player " + targetUsername + " declined the invite.");
             hostHandler.sendMessage(declineNotif);
         }
     }
@@ -304,7 +307,7 @@ public class ServerControl {
         
         if (oldRoom.getPlayerCount() == 0) {
             activeRooms.remove(oldRoom);
-            view.logMessage("Room " + oldRoom.getRoomId() + " was dissolved (empty).");
+            view.logMessage("Room " + oldRoom.getRoomId() + " was disbanded (empty).");
         } else {
             Player remainingPlayer = oldRoom.getPlayers().get(0);
             if (player.equals(oldRoom.getHost())) { 
@@ -388,6 +391,7 @@ public class ServerControl {
 
                 room.getGameState().setMessage(player.getUsername() + " left! " + winner.getUsername() + " wins!");
                 room.getGameState().setGameStatus("FINISHED");
+                room.getGameState().setTurnDuration(0);
                 Command endCmd = new Command(Command.Type.OPPONENT_LEFT, "SERVER", room.getGameState());
                 broadcastToRoom(room, endCmd, handler);
             }
@@ -400,7 +404,7 @@ public class ServerControl {
         
         if (room.getPlayerCount() == 0) {
             activeRooms.remove(room);
-            view.logMessage("Room " + roomId + " was dissolved (empty).");
+            view.logMessage("Room " + roomId + " was disbanded (empty).");
         } else {
             Player remainingPlayer = room.getPlayers().get(0);
             
@@ -457,6 +461,9 @@ public class ServerControl {
             
             room.initializeGame();
             
+            room.getGameState().setTurnStartTime(System.currentTimeMillis());
+            room.getGameState().setTurnDuration(TURN_DURATION_MS);
+            
             flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
             flipCountMap.put(room.getRoomId(), 0);
             
@@ -486,7 +493,7 @@ public class ServerControl {
         if (room == null || !room.getStatus().equals("FINISHED")) return;
         
         if (accepted) {
-            view.logMessage(player.getUsername() + " (guest) accepted rematch in room " + room.getRoomId());
+            view.logMessage(player.getUsername() + " (guest) agreed to a rematch in room " + room.getRoomId());
             
             room.resetForRematch();
             room.setPlayerReady(player.getUsername());
@@ -494,7 +501,7 @@ public class ServerControl {
             broadcastRoomState(room);
             
         } else {
-            view.logMessage(player.getUsername() + " declined rematch in room " + room.getRoomId());
+            view.logMessage(player.getUsername() + " declined the rematch in room " + room.getRoomId());
             
             synchronized (room.getPlayers()) {
                 room.removePlayer(player);
@@ -600,7 +607,7 @@ public void broadcastRoomState(GameRoom room) {
         GameRoom room = findRoomByPlayer(player.getUsername());
         if (room != null) {
             if (player.getUsername().equalsIgnoreCase(room.getHost().getUsername())) {
-                handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "You are the host, you are always ready."));
+                handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "You are the host, you are ready by default."));
                 return;
             }
             
@@ -632,6 +639,9 @@ public void broadcastRoomState(GameRoom room) {
 
         room.initializeGame();
         
+        room.getGameState().setTurnStartTime(System.currentTimeMillis());
+        room.getGameState().setTurnDuration(TURN_DURATION_MS);
+        
         flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
         flipCountMap.put(room.getRoomId(), 0);
         
@@ -652,7 +662,7 @@ public void broadcastRoomState(GameRoom room) {
             public void run() {
                 handleTurnTimeout(room);
             }
-        }, 10000);
+        }, TURN_DURATION_MS);
     }
 
     private void handleTurnTimeout(GameRoom room) {
@@ -672,8 +682,15 @@ public void broadcastRoomState(GameRoom room) {
         flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
         
         switchPlayerTurn(room);
+        gameState.setMessage("Time's up! Switching to " + gameState.getCurrentPlayerUsername() + "'s turn.");
         
-        scheduleNextTurn(room, "Time's up! ");
+        gameState.setTurnStartTime(System.currentTimeMillis());
+        gameState.setTurnDuration(TURN_DURATION_MS);
+        
+        Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
+        broadcastToRoom(room, updateCmd, null);
+        
+        startTurnTimer(room);
     }
 
     private void switchPlayerTurn(GameRoom room) {
@@ -710,7 +727,7 @@ public void broadcastRoomState(GameRoom room) {
         
         int currentFlipCount = flipCountMap.getOrDefault(roomId, 0);
         if (currentFlipCount >= 2) {
-            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Already flipped 2 cards. Please wait."));
+            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Two cards flipped. Please wait for result."));
             return;
         }
         
@@ -733,6 +750,9 @@ public void broadcastRoomState(GameRoom room) {
             flippedIndices[0] = cardIndex;
             gameState.setMessage(player.getUsername() + " flipped 1 card...");
             
+            gameState.setTurnStartTime(System.currentTimeMillis());
+            gameState.setTurnDuration(TURN_DURATION_MS);
+            
             Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
             broadcastToRoom(room, updateCmd, null);
             
@@ -743,7 +763,10 @@ public void broadcastRoomState(GameRoom room) {
 
         } else if (newFlipCount == 2) {
             flippedIndices[1] = cardIndex;
-            gameState.setMessage(player.getUsername() + " is checking match...");
+            gameState.setMessage(player.getUsername() + " flipped 2 cards...");
+            
+            gameState.setTurnStartTime(System.currentTimeMillis());
+            gameState.setTurnDuration(TURN_DURATION_MS);
 
             Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
             broadcastToRoom(room, updateCmd, null);
@@ -761,6 +784,11 @@ public void broadcastRoomState(GameRoom room) {
         String card2 = gameState.getCardValues().get(flippedIndices[1]);
 
         cleanupRoomTimer(room.getRoomId());
+        
+        gameState.setMessage("Get Ready!");
+        gameState.setTurnDuration(2000); 
+        Command readyCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
+        broadcastToRoom(room, readyCmd, null);
         
         Timer delayTimer = new Timer();
         delayTimer.schedule(new TimerTask() {
@@ -780,42 +808,29 @@ public void broadcastRoomState(GameRoom room) {
                         return; 
                     }
                     
-                    currentMessage = player.getUsername() + " scored!";
+                    currentMessage = player.getUsername() + " scored a point!";
                 } else {
                     gameState.setCardFlipped(flippedIndices[0], false);
                     gameState.setCardFlipped(flippedIndices[1], false);
                     
                     currentMessage = "No match!";
-                    switchPlayerTurn(room);
                 }
+                
+                switchPlayerTurn(room);
+                
+                gameState.setMessage(currentMessage + " Turn: " + gameState.getCurrentPlayerUsername());
+                
+                gameState.setTurnStartTime(System.currentTimeMillis());
+                gameState.setTurnDuration(TURN_DURATION_MS);
+                
+                Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
+                broadcastToRoom(room, updateCmd, null);
                 
                 flipCountMap.put(room.getRoomId(), 0);
                 flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
-                
-                scheduleNextTurn(room, currentMessage);
-            }
-        }, PREPARE_DELAY_MS);
-    }
-    
-    private void scheduleNextTurn(GameRoom room, String messagePrefix) {
-        GameState gameState = room.getGameState();
-        String nextPlayer = gameState.getCurrentPlayerUsername();
-        
-        gameState.setMessage("Get Ready! " + messagePrefix + " Turn: " + nextPlayer);
-        Command prepareCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
-        broadcastToRoom(room, prepareCmd, null);
-        
-        Timer prepareTimer = new Timer();
-        prepareTimer.schedule(new TimerTask() {
-            @Override
-            public void run() {
-                gameState.setMessage("GO! Turn: " + nextPlayer);
-                Command startTurnCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
-                broadcastToRoom(room, startTurnCmd, null);
-                
                 startTurnTimer(room);
             }
-        }, PREPARE_DELAY_MS);
+        }, 2000);
     }
     
     private void handleGameOver(GameRoom room, Map<String, Integer> finalScores) {
@@ -835,7 +850,7 @@ public void broadcastRoomState(GameRoom room) {
         boolean isDraw = (sortedScores.size() > 1) && (winnerScore == opponentScore);
         
         if (isDraw) {
-            message = "Game Over! It's a draw at " + winnerScore + " points!";
+            message = "Game Over! It's a draw with " + winnerScore + " points!";
         } else {
             message = "Game Over! " + winnerName + " wins with " + winnerScore + " points!";
         }
@@ -858,6 +873,7 @@ public void broadcastRoomState(GameRoom room) {
         }
         
         room.getGameState().setMessage(message);
+        room.getGameState().setTurnDuration(0);
         Command endCmd = new Command(Command.Type.GAME_OVER, "SERVER", room.getGameState());
         broadcastToRoom(room, endCmd, null);
         

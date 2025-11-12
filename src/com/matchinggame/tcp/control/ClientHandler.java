@@ -136,6 +136,10 @@ public class ClientHandler extends Thread {
                 boolean accepted = (Boolean) command.getData();
                 serverControl.handleRematchResponse(this, accepted);
                 break;
+            
+            case GET_MATCH_HISTORY:
+                serverControl.handleGetMatchHistory(this);
+                break;
                 
             default:
                 serverControl.logError("Received unknown command from " + player.getUsername() + ": " + command.getType());

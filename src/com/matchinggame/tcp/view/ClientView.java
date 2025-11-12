@@ -20,6 +20,7 @@ import com.matchinggame.tcp.model.FlipData;
 import com.matchinggame.tcp.model.GameRoom;
 import com.matchinggame.tcp.model.GameState;
 import com.matchinggame.tcp.model.InviteData;
+import com.matchinggame.tcp.model.MatchHistoryEntry;
 import com.matchinggame.tcp.model.Player;
 import java.awt.CardLayout;
 import java.awt.Color;
@@ -30,6 +31,7 @@ import java.awt.Graphics;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Image;
+import java.text.SimpleDateFormat;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -57,6 +59,8 @@ public class ClientView extends JFrame {
     
     private JList<Player> leaderboardList;
     private DefaultListModel<Player> leaderboardListModel;
+    private JButton viewHistoryButton;
+    private MatchHistoryDialog matchHistoryDialog;
     
     private JPopupMenu playerContextMenu;
     private JMenuItem inviteMenuItem;
@@ -115,6 +119,7 @@ public class ClientView extends JFrame {
         clientControl = new ClientControl(this);
         loadImages(); 
         initTimer();
+        matchHistoryDialog = new MatchHistoryDialog(this);
 
         mainLayout = new CardLayout();
         mainPanel = new JPanel(mainLayout);
@@ -283,10 +288,20 @@ public class ClientView extends JFrame {
         roomScrollPane.setBorder(null);
         roomSection.add(roomScrollPane, BorderLayout.CENTER);
         
+        JPanel roomControlPanel = new JPanel(new GridLayout(1, 2, 10, 10));
+        roomControlPanel.setBackground(CHARCOAL_BLUE);
+        
         createRoomButton = new JButton("Create Room (Solo)");
         styleButton(createRoomButton, VIBRANT_TEAL, OFF_WHITE, FONT_MAIN_BOLD.deriveFont(18f));
         createRoomButton.addActionListener(e -> showCreateRoomDialog(null));
-        roomSection.add(createRoomButton, BorderLayout.SOUTH);
+        
+        viewHistoryButton = new JButton("View Match History");
+        styleButton(viewHistoryButton, WARM_ORANGE, OFF_WHITE, FONT_MAIN_BOLD.deriveFont(18f));
+        viewHistoryButton.addActionListener(e -> showMatchHistory());
+        
+        roomControlPanel.add(createRoomButton);
+        roomControlPanel.add(viewHistoryButton);
+        roomSection.add(roomControlPanel, BorderLayout.SOUTH);
         
         leftSplitPane.setTopComponent(playerSection);
         leftSplitPane.setBottomComponent(roomSection);
@@ -294,7 +309,7 @@ public class ClientView extends JFrame {
         
         JPanel leaderboardSection = new JPanel(new BorderLayout());
         leaderboardSection.setBackground(CHARCOAL_BLUE);
-        leaderboardSection.setBorder(createThemedTitledBorder("Leaderboard"));
+        leaderboardSection.setBorder(createThemedTitledBorder("Leaderboard (Score | W-L-D)"));
         leaderboardListModel = new DefaultListModel<>();
         leaderboardList = new JList<>(leaderboardListModel);
         styleList(leaderboardList);
@@ -603,6 +618,12 @@ public class ClientView extends JFrame {
                             "Rematch Request", JOptionPane.YES_NO_OPTION);
                     clientControl.sendCommand(new Command(Command.Type.REMATCH_RESPONSE, currentUsername, rematchChoice == JOptionPane.YES_OPTION));
                 }
+                break;
+                
+            case SEND_MATCH_HISTORY:
+                ArrayList<MatchHistoryEntry> history = (ArrayList<MatchHistoryEntry>) command.getData();
+                matchHistoryDialog.updateHistory(history);
+                matchHistoryDialog.setVisible(true);
                 break;
                 
             default:
@@ -1012,6 +1033,10 @@ public class ClientView extends JFrame {
             leaveCurrentRoom();
         }
     }
+    
+    private void showMatchHistory() {
+        clientControl.sendCommand(new Command(Command.Type.GET_MATCH_HISTORY, currentUsername, null));
+    }
 
     public void resetLoginControls() {
         connectButton.setEnabled(true);
@@ -1264,7 +1289,12 @@ public class ClientView extends JFrame {
             
             rankLabel.setText(String.format("%d.", index + 1));
             nameLabel.setText(player.getUsername());
-            statsLabel.setText(String.format("Score: %d | Wins: %d", player.getTotalScore(), player.getTotalWins()));
+            
+            statsLabel.setText(String.format("Score: %d | W: %d | L: %d | D: %d", 
+                    player.getTotalScore(), 
+                    player.getTotalWins(),
+                    player.getTotalLosses(),
+                    player.getTotalDraws()));
             
             if (isSelected) {
                 setBackground(VIBRANT_TEAL);
@@ -1279,6 +1309,117 @@ public class ClientView extends JFrame {
             }
             
             return this;
+        }
+    }
+    
+    private class MatchHistoryDialog extends JDialog {
+        private JList<MatchHistoryEntry> historyList;
+        private DefaultListModel<MatchHistoryEntry> historyListModel;
+        private SimpleDateFormat dateFormat = new SimpleDateFormat("dd/MM/yyyy HH:mm");
+
+        public MatchHistoryDialog(JFrame parent) {
+            super(parent, "Match History (Last 20 Games)", true);
+            setSize(600, 500);
+            setLocationRelativeTo(parent);
+            getContentPane().setBackground(CHARCOAL_BLUE);
+
+            historyListModel = new DefaultListModel<>();
+            historyList = new JList<>(historyListModel);
+            styleList(historyList);
+            historyList.setCellRenderer(new HistoryListRenderer());
+            
+            JScrollPane scrollPane = new JScrollPane(historyList);
+            scrollPane.setBorder(null);
+            
+            add(scrollPane, BorderLayout.CENTER);
+        }
+
+        public void updateHistory(List<MatchHistoryEntry> history) {
+            historyListModel.clear();
+            if (history.isEmpty()) {
+                historyListModel.addElement(null); 
+            } else {
+                for (MatchHistoryEntry entry : history) {
+                    historyListModel.addElement(entry);
+                }
+            }
+        }
+        
+        private class HistoryListRenderer extends JPanel implements ListCellRenderer<MatchHistoryEntry> {
+            private JLabel resultLabel;
+            private JLabel detailsLabel;
+            private JLabel dateLabel;
+
+            public HistoryListRenderer() {
+                setLayout(new BorderLayout(10, 0));
+                setBackground(GREY_BLUE);
+                setOpaque(true);
+                setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(0, 0, 1, 0, CHARCOAL_BLUE),
+                    BorderFactory.createEmptyBorder(8, 8, 8, 8)
+                ));
+
+                resultLabel = new JLabel();
+                resultLabel.setFont(FONT_MAIN_BOLD.deriveFont(18f));
+                resultLabel.setOpaque(false);
+                resultLabel.setPreferredSize(new Dimension(80, 0));
+
+                detailsLabel = new JLabel();
+                detailsLabel.setFont(FONT_MAIN_PLAIN.deriveFont(16f));
+                detailsLabel.setForeground(OFF_WHITE);
+                detailsLabel.setOpaque(false);
+
+                dateLabel = new JLabel();
+                dateLabel.setFont(FONT_MAIN_PLAIN.deriveFont(14f));
+                dateLabel.setForeground(LIGHT_GREY);
+                dateLabel.setOpaque(false);
+
+                add(resultLabel, BorderLayout.WEST);
+                add(detailsLabel, BorderLayout.CENTER);
+                add(dateLabel, BorderLayout.EAST);
+            }
+
+            @Override
+            public Component getListCellRendererComponent(JList<? extends MatchHistoryEntry> list, MatchHistoryEntry entry, int index, boolean isSelected, boolean cellHasFocus) {
+                
+                if (entry == null) {
+                    detailsLabel.setText("No match history found.");
+                    resultLabel.setText("");
+                    dateLabel.setText("");
+                    resultLabel.setForeground(LIGHT_GREY);
+                    return this;
+                }
+
+                String result = entry.getResult();
+                if ("Win".equals(result)) {
+                    resultLabel.setForeground(CLEAR_GREEN);
+                } else if ("Loss".equals(result)) {
+                    resultLabel.setForeground(SOFT_RED);
+                } else {
+                    resultLabel.setForeground(WARM_ORANGE);
+                }
+                resultLabel.setText(result);
+
+                detailsLabel.setText(String.format("vs. %s (You: %d - Opp: %d)",
+                    entry.getOpponentName(),
+                    entry.getMyScore(),
+                    entry.getOpponentScore()
+                ));
+                
+                dateLabel.setText(dateFormat.format(entry.getPlayedOn()));
+
+                if (isSelected) {
+                    setBackground(VIBRANT_TEAL);
+                    detailsLabel.setForeground(OFF_WHITE);
+                    dateLabel.setForeground(OFF_WHITE);
+                } else {
+                    setBackground(GREY_BLUE);
+                    detailsLabel.setForeground(OFF_WHITE);
+                    dateLabel.setForeground(LIGHT_GREY);
+                }
+                
+                return this;
+            }
         }
     }
 }

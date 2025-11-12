@@ -40,7 +40,10 @@ public class Command implements Serializable {
         QUIT_GAME,
         REMATCH_REQUEST,
         REMATCH_RESPONSE,
-        UPDATE_PLAYER_SCORE
+        UPDATE_PLAYER_SCORE,
+        
+        GET_MATCH_HISTORY,
+        SEND_MATCH_HISTORY
     }
 
     private Type type;

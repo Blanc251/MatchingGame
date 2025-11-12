@@ -10,19 +10,25 @@ public class Player implements Serializable {
     private int totalScore;
     private String status;
     private int totalWins;
+    private int totalLosses;
+    private int totalDraws;
 
     public Player(String username, int totalScore, String status) {
         this.username = username;
         this.totalScore = totalScore;
         this.status = status;
         this.totalWins = 0;
+        this.totalLosses = 0;
+        this.totalDraws = 0;
     }
     
-    public Player(String username, int totalScore, String status, int totalWins) {
+    public Player(String username, int totalScore, String status, int totalWins, int totalLosses, int totalDraws) {
         this.username = username;
         this.totalScore = totalScore;
         this.status = status;
         this.totalWins = totalWins;
+        this.totalLosses = totalLosses;
+        this.totalDraws = totalDraws;
     }
 
     public String getUsername() {
@@ -55,6 +61,22 @@ public class Player implements Serializable {
 
     public void setTotalWins(int totalWins) {
         this.totalWins = totalWins;
+    }
+
+    public int getTotalLosses() {
+        return totalLosses;
+    }
+
+    public void setTotalLosses(int totalLosses) {
+        this.totalLosses = totalLosses;
+    }
+
+    public int getTotalDraws() {
+        return totalDraws;
+    }
+
+    public void setTotalDraws(int totalDraws) {
+        this.totalDraws = totalDraws;
     }
 
     @Override

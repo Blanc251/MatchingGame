@@ -20,6 +20,7 @@ import com.matchinggame.tcp.model.FlipData;
 import com.matchinggame.tcp.model.GameRoom;
 import com.matchinggame.tcp.model.GameState;
 import com.matchinggame.tcp.model.InviteData;
+import com.matchinggame.tcp.model.MatchHistoryEntry;
 import com.matchinggame.tcp.model.Player;
 import com.matchinggame.tcp.view.ServerView;
 
@@ -74,15 +75,20 @@ public class ServerControl {
         }
     }
     
-    private void updatePlayerScoreAndWins(Player player, int scoreChange, boolean isWinner) {
+    private void updatePlayerStats(Player player, int scoreChange, boolean isWinner, boolean isDraw, boolean isLoser) {
         Player dataPlayer = allPlayersData.get(player.getUsername().toLowerCase());
         if (dataPlayer != null) {
             dataPlayer.setTotalScore(dataPlayer.getTotalScore() + scoreChange);
+            
             if (isWinner) {
                 dataPlayer.setTotalWins(dataPlayer.getTotalWins() + 1);
+            } else if (isDraw) {
+                dataPlayer.setTotalDraws(dataPlayer.getTotalDraws() + 1);
+            } else if (isLoser) {
+                dataPlayer.setTotalLosses(dataPlayer.getTotalLosses() + 1);
             }
             
-            dbManager.updatePlayerScoreAndWins(dataPlayer); 
+            dbManager.updatePlayerStats(dataPlayer); 
         }
     }
     
@@ -90,7 +96,9 @@ public class ServerControl {
     synchronized (allPlayersData) {
         return allPlayersData.values().stream()
                 .sorted(Comparator.comparing(Player::getTotalScore, Comparator.reverseOrder())
-                        .thenComparing(Player::getTotalWins, Comparator.reverseOrder()))
+                        .thenComparing(Player::getTotalWins, Comparator.reverseOrder())
+                        .thenComparing(Player::getTotalDraws, Comparator.reverseOrder())
+                        .thenComparing(Player::getTotalLosses))
                 .collect(Collectors.toList());
     }
 }
@@ -113,7 +121,7 @@ public class ServerControl {
                 return dbPlayer;
             } else {
                 int initialScore = 0; 
-                Player newPlayer = new Player(username, initialScore, "Offline", 0);
+                Player newPlayer = new Player(username, initialScore, "Offline", 0, 0, 0);
                 dbManager.insertPlayer(newPlayer); 
                 allPlayersData.put(username.toLowerCase(), newPlayer);
                 return newPlayer;
@@ -384,10 +392,20 @@ public class ServerControl {
             
             if (winner != null) {
                 int winnerMatchScore = room.getGameState().getScores().getOrDefault(winner.getUsername(), 0);
+                int loserMatchScore = room.getGameState().getScores().getOrDefault(player.getUsername(), 0);
                 int bonusScore = 5;
                 
-                updatePlayerScoreAndWins(winner, winnerMatchScore + bonusScore, true); 
-                updatePlayerScoreAndWins(player, 0, false); 
+                updatePlayerStats(winner, winnerMatchScore + bonusScore, true, false, false); 
+                updatePlayerStats(player, loserMatchScore, false, false, true); 
+                
+                dbManager.insertMatchHistory(
+                        winner.getUsername(), 
+                        player.getUsername(), 
+                        winnerMatchScore, 
+                        loserMatchScore, 
+                        winner.getUsername(),
+                        false
+                );
 
                 room.getGameState().setMessage(player.getUsername() + " left! " + winner.getUsername() + " wins!");
                 room.getGameState().setGameStatus("FINISHED");
@@ -855,22 +873,35 @@ public void broadcastRoomState(GameRoom room) {
             message = "Game Over! " + winnerName + " wins with " + winnerScore + " points!";
         }
         
+        String p1Name = room.getPlayers().get(0).getUsername();
+        String p2Name = room.getPlayers().get(1).getUsername();
+        int p1Score = finalScores.getOrDefault(p1Name, 0);
+        int p2Score = finalScores.getOrDefault(p2Name, 0);
+        
+        String dbWinnerName = null;
+        
         for (Player p : room.getPlayers()) {
             boolean isWinner = false;
+            boolean isLoser = false;
             int matchScore = finalScores.getOrDefault(p.getUsername(), 0);
             int bonusScore = 0;
 
             if (isDraw) {
-            
+                
             } else if (p.getUsername().equals(winnerName)) {
                 isWinner = true;
                 bonusScore = 10;
+                dbWinnerName = p.getUsername();
+            } else {
+                isLoser = true;
             }
             
             int dbScoreChange = matchScore + bonusScore;
             
-            updatePlayerScoreAndWins(p, dbScoreChange, isWinner); 
+            updatePlayerStats(p, dbScoreChange, isWinner, isDraw, isLoser); 
         }
+        
+        dbManager.insertMatchHistory(p1Name, p2Name, p1Score, p2Score, dbWinnerName, isDraw);
         
         room.getGameState().setMessage(message);
         room.getGameState().setTurnDuration(0);
@@ -887,5 +918,11 @@ public void broadcastRoomState(GameRoom room) {
             if (!matched) return false;
         }
         return true;
+    }
+    
+    public void handleGetMatchHistory(ClientHandler handler) {
+        String username = handler.getPlayer().getUsername();
+        List<MatchHistoryEntry> history = dbManager.getMatchHistoryForPlayer(username);
+        handler.sendMessage(new Command(Command.Type.SEND_MATCH_HISTORY, "SERVER", new ArrayList<>(history)));
     }
 }

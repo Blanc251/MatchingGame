@@ -37,6 +37,7 @@ public class ServerControl {
     private Map<String, Timer> turnTimers = Collections.synchronizedMap(new java.util.concurrent.ConcurrentHashMap<>());
     private Map<String, int[]> flippedCardsMap = Collections.synchronizedMap(new java.util.concurrent.ConcurrentHashMap<>());
     private Map<String, Integer> flipCountMap = Collections.synchronizedMap(new java.util.concurrent.ConcurrentHashMap<>());
+    private static final int PREPARE_DELAY_MS = 2000;
 
     public ServerControl(ServerView view) {
         this.view = view;
@@ -52,23 +53,23 @@ public class ServerControl {
                     p -> p
                 ))
         );
-        view.logMessage("Đã tải " + allPlayersData.size() + " người chơi từ cơ sở dữ liệu.");
+        view.logMessage("Loaded " + allPlayersData.size() + " players from database.");
     }
 
     public void start() {
         try {
             serverSocket = new ServerSocket(PORT);
-            view.logMessage("Server đang chạy trên cổng " + PORT + "...");
+            view.logMessage("Server is running on port " + PORT + "...");
             
             while (true) {
                 Socket clientSocket = serverSocket.accept();
-                view.logMessage("Client mới kết nối từ: " + clientSocket.getInetAddress().getHostAddress());
+                view.logMessage("New client connected from: " + clientSocket.getInetAddress().getHostAddress());
                 ClientHandler handler = new ClientHandler(clientSocket, this);
                 connectedClients.add(handler);
                 handler.start();
             }
         } catch (IOException e) {
-            view.logMessage("Lỗi Server: " + e.getMessage());
+            view.logMessage("Server Error: " + e.getMessage());
         }
     }
     
@@ -127,7 +128,7 @@ public class ServerControl {
             }
         }
         view.addUserToList(player.getUsername()); 
-        view.logMessage("[LOGIN] " + player.getUsername() + " đã đăng nhập. (Score: " + player.getTotalScore() + ")");
+        view.logMessage("[LOGIN] " + player.getUsername() + " has logged in. (Score: " + player.getTotalScore() + ")");
         broadcastRoomList();
         broadcastPlayerScoreUpdate();
     }
@@ -154,24 +155,22 @@ public class ServerControl {
             }
 
             removePlayer(username);
-            view.logMessage("[DISCONNECT] " + username + " đã ngắt kết nối.");
+            view.logMessage("[DISCONNECT] " + username + " has disconnected.");
             broadcastPlayerList();
             broadcastPlayerScoreUpdate();
         }
-        view.logMessage("Tổng số Client đang kết nối: " + connectedClients.size());
+        view.logMessage("Total connected clients: " + connectedClients.size());
     }
 
     public void broadcastPlayerList() {
-        view.logMessage("Broadcasting player list... (" + onlinePlayers.size() + " users online)");
+        view.logMessage("Broadcasting player list... (" + allPlayersData.size() + " total players)");
         
         List<Player> lobbyPlayers;
         synchronized (allPlayersData) {
-            lobbyPlayers = allPlayersData.values().stream()
-                .filter(p -> "Online".equals(p.getStatus()))
-                .collect(Collectors.toList());
+            lobbyPlayers = new ArrayList<>(allPlayersData.values());
         }
             
-        Command command = new Command(Command.Type.UPDATE_PLAYER_LIST, "SERVER", new ArrayList<>(lobbyPlayers));
+        Command command = new Command(Command.Type.UPDATE_PLAYER_LIST, "SERVER", lobbyPlayers);
         
         synchronized (connectedClients) {
             for (ClientHandler client : connectedClients) {
@@ -212,13 +211,13 @@ public class ServerControl {
         GameRoom newRoom = new GameRoom(roomId, host, cardCount);
         activeRooms.add(newRoom);
         
-        host.setStatus("InRoom");
+        host.setStatus("Online");
         
         handler.sendMessage(new Command(Command.Type.CREATE_ROOM_SUCCESS, "SERVER", newRoom));
         
         broadcastPlayerList();
         broadcastRoomList();
-        view.logMessage("Phòng mới được tạo: " + roomId + " bởi " + host.getUsername());
+        view.logMessage("New room created: " + roomId + " by " + host.getUsername());
     }
 
     public void handleCreateRoomAndInvite(ClientHandler hostHandler, InviteData data) {
@@ -230,7 +229,7 @@ public class ServerControl {
         GameRoom newRoom = new GameRoom(roomId, host, cardCount);
         activeRooms.add(newRoom);
         
-        host.setStatus("InRoom");
+        host.setStatus("Online");
         
         hostHandler.sendMessage(new Command(Command.Type.CREATE_ROOM_SUCCESS, "SERVER", newRoom));
         
@@ -239,7 +238,7 @@ public class ServerControl {
         
         if (targetHandler != null) {
             if (!"Online".equals(targetHandler.getPlayer().getStatus())) {
-                hostHandler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Người chơi " + targetUsername + " đang bận."));
+                hostHandler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Player " + targetUsername + " is busy."));
                 return;
             }
             
@@ -247,12 +246,12 @@ public class ServerControl {
             Command inviteCommand = new Command(Command.Type.RECEIVE_INVITE, inviterName, newRoom.getRoomId());
             targetHandler.sendMessage(inviteCommand);
         } else {
-            hostHandler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Lỗi: Không tìm thấy người chơi " + targetUsername));
+            hostHandler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Error: Player " + targetUsername + " not found."));
         }
         
         broadcastPlayerList();
         broadcastRoomList();
-        view.logMessage("Phòng mới: " + roomId + " (Host: " + host.getUsername() + ", Mời: " + targetUsername + ")");
+        view.logMessage("New room: " + roomId + " (Host: " + host.getUsername() + ", Invited: " + targetUsername + ")");
     }
     
     public void handleDeclineInvite(ClientHandler targetHandler, String roomId) {
@@ -264,7 +263,7 @@ public class ServerControl {
         
         if (hostHandler != null) {
             String targetUsername = targetHandler.getPlayer().getUsername();
-            Command declineNotif = new Command(Command.Type.RECEIVE_INVITE_DECLINED, targetUsername, "Người chơi " + targetUsername + " đã từ chối lời mời.");
+            Command declineNotif = new Command(Command.Type.RECEIVE_INVITE_DECLINED, targetUsername, "Player " + targetUsername + " declined your invite.");
             hostHandler.sendMessage(declineNotif);
         }
     }
@@ -272,14 +271,14 @@ public class ServerControl {
     public void handleInvitePlayer(ClientHandler inviter, String targetUsername) {
         GameRoom room = findRoomByPlayer(inviter.getPlayer().getUsername());
         if (room == null || !room.getHost().equals(inviter.getPlayer())) {
-            inviter.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Lỗi: Bạn không phải chủ phòng."));
+            inviter.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Error: You are not the host."));
             return;
         }
 
         ClientHandler targetHandler = findClientHandler(targetUsername);
         if (targetHandler != null) {
             if (!"Online".equals(targetHandler.getPlayer().getStatus())) {
-                inviter.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Người chơi " + targetUsername + " đang bận."));
+                inviter.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Player " + targetUsername + " is busy."));
                 return;
             }
             
@@ -287,16 +286,42 @@ public class ServerControl {
             Command inviteCommand = new Command(Command.Type.RECEIVE_INVITE, inviterName, room.getRoomId());
             targetHandler.sendMessage(inviteCommand);
             
-            inviter.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Đã gửi lời mời tới " + targetUsername));
+            inviter.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Invite sent to " + targetUsername));
         } else {
-            inviter.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Lỗi: Không tìm thấy người chơi " + targetUsername));
+            inviter.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Error: Player " + targetUsername + " not found."));
         }
     }
 
     public void handleJoinRoom(ClientHandler handler, String roomId) {
     Player player = handler.getPlayer();
+
+    GameRoom oldRoom = findRoomByPlayer(player.getUsername());
+    if (oldRoom != null) {
+        view.logMessage("[JOIN] Player " + player.getUsername() + " is leaving old room " + oldRoom.getRoomId() + " to join " + roomId);
+        synchronized(oldRoom.getPlayers()) { 
+            oldRoom.removePlayer(player); 
+        }
+        
+        if (oldRoom.getPlayerCount() == 0) {
+            activeRooms.remove(oldRoom);
+            view.logMessage("Room " + oldRoom.getRoomId() + " was dissolved (empty).");
+        } else {
+            Player remainingPlayer = oldRoom.getPlayers().get(0);
+            if (player.equals(oldRoom.getHost())) { 
+                oldRoom.setHost(remainingPlayer); 
+            }
+            remainingPlayer.setStatus("Online");
+            oldRoom.setStatus("WAITING");
+            oldRoom.getReadyPlayers().clear();
+            oldRoom.getReadyPlayers().add(remainingPlayer.getUsername());
+            oldRoom.getRematchStatus().clear();
+            broadcastRoomState(oldRoom);
+        }
+        broadcastRoomList();
+    }
+    
     if (player == null || !"Online".equals(player.getStatus())) {
-        handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Bạn đang ở trong phòng khác."));
+        handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "You are already in another room."));
         return;
     }
 
@@ -312,7 +337,11 @@ public class ServerControl {
         }
 
         if (added) {
-            player.setStatus("InRoom");
+            
+            if (room.getPlayerCount() == room.getMaxPlayers()) {
+                room.getHost().setStatus("InRoom");
+                player.setStatus("InRoom");
+            }
             
             view.logMessage("[JOIN] " + player.getUsername() + " joined room " + roomId);
             view.logMessage("[JOIN] Room now has " + room.getPlayerCount() + " players: " + 
@@ -327,10 +356,10 @@ public class ServerControl {
             broadcastPlayerList();
             broadcastRoomList();
         } else {
-            handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Phòng đã đầy hoặc bạn đã ở trong phòng."));
+            handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Room is full or you are already in it."));
         }
     } else {
-        handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Không tìm thấy phòng."));
+        handler.sendMessage(new Command(Command.Type.JOIN_ROOM_FAILED, "SERVER", "Room not found."));
     }
 }
 
@@ -342,11 +371,11 @@ public class ServerControl {
 
         cleanupRoomTimer(roomId);
         
-        boolean wasPlaying = "PLAYING".equals(room.getStatus());
-        Player winner = null;
+        boolean wasPlaying = "PLAYING".equals(room.getStatus()) || "FINISHED".equals(room.getStatus());
+        boolean wasHost = player.equals(room.getHost());
         
-        if (wasPlaying) {
-            winner = room.getPlayers().stream()
+        if (wasPlaying && room.getPlayerCount() == 2) {
+            Player winner = room.getPlayers().stream()
                     .filter(p -> !p.getUsername().equals(player.getUsername()))
                     .findFirst().orElse(null);
             
@@ -357,9 +386,9 @@ public class ServerControl {
                 updatePlayerScoreAndWins(winner, winnerMatchScore + bonusScore, true); 
                 updatePlayerScoreAndWins(player, 0, false); 
 
-                room.getGameState().setMessage(player.getUsername() + " đã thoát! " + winner.getUsername() + " chiến thắng!");
+                room.getGameState().setMessage(player.getUsername() + " left! " + winner.getUsername() + " wins!");
                 room.getGameState().setGameStatus("FINISHED");
-                Command endCmd = new Command(Command.Type.GAME_OVER, "SERVER", room.getGameState());
+                Command endCmd = new Command(Command.Type.OPPONENT_LEFT, "SERVER", room.getGameState());
                 broadcastToRoom(room, endCmd, handler);
             }
         }
@@ -371,23 +400,26 @@ public class ServerControl {
         
         if (room.getPlayerCount() == 0) {
             activeRooms.remove(room);
-            view.logMessage("Phòng " + roomId + " đã bị giải tán.");
+            view.logMessage("Room " + roomId + " was dissolved (empty).");
         } else {
-            if (player.equals(room.getHost())) {
-                activeRooms.remove(room);
-                view.logMessage("Chủ phòng " + player.getUsername() + " đã rời, giải tán phòng " + roomId);
-                Command closeCmd = new Command(Command.Type.LEAVE_ROOM, "SERVER", "Chủ phòng đã rời, phòng bị giải tán.");
-                broadcastToRoom(room, closeCmd, handler);
+            Player remainingPlayer = room.getPlayers().get(0);
+            
+            remainingPlayer.setStatus("Online");
+            
+            if (wasHost) {
+                 view.logMessage("Host " + player.getUsername() + " left room " + roomId);
+                 room.setHost(remainingPlayer);
+                 view.logMessage(remainingPlayer.getUsername() + " is the new host.");
             } else {
-                if (wasPlaying && winner == null) { 
-                    activeRooms.remove(room);
-                    view.logMessage("Phòng " + roomId + " bị giải tán do đối thủ rời đi.");
-                    Command closeCmd = new Command(Command.Type.LEAVE_ROOM, "SERVER", "Đối thủ đã rời, phòng bị giải tán.");
-                    broadcastToRoom(room, closeCmd, handler);
-                } else if (!wasPlaying) {
-                    broadcastRoomState(room);
-                }
+                 view.logMessage("Player " + player.getUsername() + " left room " + roomId);
             }
+            
+            room.setStatus("WAITING");
+            room.getReadyPlayers().clear();
+            room.getReadyPlayers().add(remainingPlayer.getUsername());
+            room.getRematchStatus().clear();
+            
+            broadcastRoomState(room); 
         }
         
         if (wasPlaying) {
@@ -410,10 +442,10 @@ public class ServerControl {
         if (room == null || !room.getStatus().equals("FINISHED")) return;
 
         room.getRematchStatus().put(player.getUsername(), true);
-        view.logMessage(player.getUsername() + " yêu cầu chơi lại trong phòng " + room.getRoomId());
+        view.logMessage(player.getUsername() + " requested a rematch in room " + room.getRoomId());
 
         if (room.getRematchStatus().values().stream().allMatch(b -> b == true) && room.getPlayerCount() == 2) {
-            view.logMessage("Cả hai đồng ý chơi lại. Tạo ván mới.");
+            view.logMessage("Both players agreed to a rematch. Starting new game.");
             Player host = room.getHost();
             Player player2 = room.getPlayers().stream().filter(p -> !p.equals(host)).findFirst().orElse(null);
             
@@ -434,14 +466,14 @@ public class ServerControl {
             startTurnTimer(room);
             
         } else {
-            Command rematchRequestCmd = new Command(Command.Type.REMATCH_REQUEST, player.getUsername(), "Đã gửi yêu cầu chơi lại. Chờ đối thủ.");
+            Command rematchRequestCmd = new Command(Command.Type.REMATCH_REQUEST, player.getUsername(), "Rematch request sent. Waiting for opponent.");
             handler.sendMessage(rematchRequestCmd);
             
             Player opponent = room.getPlayers().stream().filter(p -> !p.equals(player)).findFirst().orElse(null);
             if (opponent != null) {
                 ClientHandler opponentHandler = findClientHandler(opponent.getUsername());
                 if (opponentHandler != null) {
-                    Command opponentRematchCmd = new Command(Command.Type.REMATCH_REQUEST, player.getUsername(), "Đối thủ muốn chơi lại. Bạn có đồng ý?");
+                    Command opponentRematchCmd = new Command(Command.Type.REMATCH_REQUEST, player.getUsername(), "Opponent wants a rematch. Do you agree?");
                     opponentHandler.sendMessage(opponentRematchCmd);
                 }
             }
@@ -454,21 +486,32 @@ public class ServerControl {
         if (room == null || !room.getStatus().equals("FINISHED")) return;
         
         if (accepted) {
-            handleRematchRequest(handler);
-        } else {
-            view.logMessage(player.getUsername() + " từ chối chơi lại trong phòng " + room.getRoomId());
+            view.logMessage(player.getUsername() + " (guest) accepted rematch in room " + room.getRoomId());
             
-            Player opponent = room.getPlayers().stream().filter(p -> !p.equals(player)).findFirst().orElse(null);
-            if (opponent != null) {
-                ClientHandler opponentHandler = findClientHandler(opponent.getUsername());
-                if (opponentHandler != null) {
-                    Command closeCmd = new Command(Command.Type.LEAVE_ROOM, "SERVER", player.getUsername() + " đã từ chối chơi lại. Phòng bị giải tán.");
-                    opponentHandler.sendMessage(closeCmd);
-                }
+            room.resetForRematch();
+            room.setPlayerReady(player.getUsername());
+            
+            broadcastRoomState(room);
+            
+        } else {
+            view.logMessage(player.getUsername() + " declined rematch in room " + room.getRoomId());
+            
+            synchronized (room.getPlayers()) {
+                room.removePlayer(player);
+            }
+            player.setStatus("Online");
+            
+            Command leaveCmd = new Command(Command.Type.LEAVE_ROOM, "SERVER", "You have left the room.");
+            handler.sendMessage(leaveCmd);
+
+            room.resetForRematch();
+            
+            if (room.getPlayerCount() > 0) {
+                Player remainingPlayer = room.getPlayers().get(0);
+                remainingPlayer.setStatus("Online");
             }
             
-            room.getPlayers().forEach(p -> p.setStatus("Online"));
-            activeRooms.remove(room);
+            broadcastRoomState(room);
             broadcastPlayerList();
             broadcastRoomList();
         }
@@ -557,7 +600,7 @@ public void broadcastRoomState(GameRoom room) {
         GameRoom room = findRoomByPlayer(player.getUsername());
         if (room != null) {
             if (player.getUsername().equalsIgnoreCase(room.getHost().getUsername())) {
-                handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Bạn là chủ phòng, đã sẵn sàng mặc định."));
+                handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "You are the host, you are always ready."));
                 return;
             }
             
@@ -573,17 +616,17 @@ public void broadcastRoomState(GameRoom room) {
         GameRoom room = findRoomByPlayer(player.getUsername());
 
         if (room == null || !room.getHost().equals(player)) {
-            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Lỗi: Bạn không phải chủ phòng."));
+            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Error: You are not the host."));
             return;
         }
         
         if (room.getPlayerCount() < 2) {
-             handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Lỗi: Cần 2 người chơi để bắt đầu."));
+             handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Error: Need 2 players to start."));
              return;
         }
 
         if (!room.areAllPlayersReady()) {
-            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Lỗi: Chưa tất cả người chơi sẵn sàng."));
+            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Error: Not all players are ready."));
             return;
         }
 
@@ -629,12 +672,8 @@ public void broadcastRoomState(GameRoom room) {
         flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
         
         switchPlayerTurn(room);
-        gameState.setMessage("Hết giờ! Chuyển lượt của " + gameState.getCurrentPlayerUsername());
         
-        Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
-        broadcastToRoom(room, updateCmd, null);
-        
-        startTurnTimer(room);
+        scheduleNextTurn(room, "Time's up! ");
     }
 
     private void switchPlayerTurn(GameRoom room) {
@@ -665,13 +704,13 @@ public void broadcastRoomState(GameRoom room) {
         
         GameState gameState = room.getGameState();
         if (!player.getUsername().equals(gameState.getCurrentPlayerUsername())) {
-            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Chưa tới lượt của bạn."));
+            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "It's not your turn."));
             return;
         }
         
         int currentFlipCount = flipCountMap.getOrDefault(roomId, 0);
         if (currentFlipCount >= 2) {
-            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Đã lật 2 lá. Vui lòng chờ kiểm tra kết quả."));
+            handler.sendMessage(new Command(Command.Type.CHAT_MESSAGE, "SERVER", "Already flipped 2 cards. Please wait."));
             return;
         }
         
@@ -692,7 +731,7 @@ public void broadcastRoomState(GameRoom room) {
 
         if (newFlipCount == 1) {
             flippedIndices[0] = cardIndex;
-            gameState.setMessage(player.getUsername() + " đã lật 1 lá...");
+            gameState.setMessage(player.getUsername() + " flipped 1 card...");
             
             Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
             broadcastToRoom(room, updateCmd, null);
@@ -704,7 +743,7 @@ public void broadcastRoomState(GameRoom room) {
 
         } else if (newFlipCount == 2) {
             flippedIndices[1] = cardIndex;
-            gameState.setMessage(player.getUsername() + " đã lật 2 lá...");
+            gameState.setMessage(player.getUsername() + " is checking match...");
 
             Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
             broadcastToRoom(room, updateCmd, null);
@@ -741,26 +780,42 @@ public void broadcastRoomState(GameRoom room) {
                         return; 
                     }
                     
-                    currentMessage = player.getUsername() + " ăn điểm!";
+                    currentMessage = player.getUsername() + " scored!";
                 } else {
                     gameState.setCardFlipped(flippedIndices[0], false);
                     gameState.setCardFlipped(flippedIndices[1], false);
                     
-                    currentMessage = "Không khớp!";
+                    currentMessage = "No match!";
+                    switchPlayerTurn(room);
                 }
-                
-                switchPlayerTurn(room);
-                
-                gameState.setMessage(currentMessage + " Lượt của " + gameState.getCurrentPlayerUsername());
-                
-                Command updateCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
-                broadcastToRoom(room, updateCmd, null);
                 
                 flipCountMap.put(room.getRoomId(), 0);
                 flippedCardsMap.put(room.getRoomId(), new int[]{-1, -1});
+                
+                scheduleNextTurn(room, currentMessage);
+            }
+        }, PREPARE_DELAY_MS);
+    }
+    
+    private void scheduleNextTurn(GameRoom room, String messagePrefix) {
+        GameState gameState = room.getGameState();
+        String nextPlayer = gameState.getCurrentPlayerUsername();
+        
+        gameState.setMessage("Get Ready! " + messagePrefix + " Turn: " + nextPlayer);
+        Command prepareCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
+        broadcastToRoom(room, prepareCmd, null);
+        
+        Timer prepareTimer = new Timer();
+        prepareTimer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                gameState.setMessage("GO! Turn: " + nextPlayer);
+                Command startTurnCmd = new Command(Command.Type.GAME_UPDATE, "SERVER", gameState);
+                broadcastToRoom(room, startTurnCmd, null);
+                
                 startTurnTimer(room);
             }
-        }, 2000);
+        }, PREPARE_DELAY_MS);
     }
     
     private void handleGameOver(GameRoom room, Map<String, Integer> finalScores) {
@@ -775,14 +830,14 @@ public void broadcastRoomState(GameRoom room) {
         int winnerScore = sortedScores.get(0).getValue();
         int opponentScore = (sortedScores.size() > 1) ? sortedScores.get(1).getValue() : 0;
         
-        String message = "Trò chơi kết thúc!";
+        String message = "Game Over!";
         
         boolean isDraw = (sortedScores.size() > 1) && (winnerScore == opponentScore);
         
         if (isDraw) {
-            message = "Trò chơi kết thúc! Hòa với số điểm " + winnerScore;
+            message = "Game Over! It's a draw at " + winnerScore + " points!";
         } else {
-            message = "Trò chơi kết thúc! " + winnerName + " chiến thắng với " + winnerScore + " điểm!";
+            message = "Game Over! " + winnerName + " wins with " + winnerScore + " points!";
         }
         
         for (Player p : room.getPlayers()) {

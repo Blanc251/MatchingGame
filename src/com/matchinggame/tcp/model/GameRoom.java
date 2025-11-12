@@ -2,6 +2,7 @@ package com.matchinggame.tcp.model;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,6 +21,13 @@ public class GameRoom implements Serializable {
     private GameState gameState;
     
     private ConcurrentHashMap<String, Boolean> rematchStatus;
+    
+    private static final List<String> IMAGE_NAMES = Arrays.asList(
+        "icon (1).png", "icon (2).png", "icon (3).png", "icon (4).png",
+        "icon (5).png", "icon (6).png", "icon (7).png", "icon (8).png",
+        "icon (9).png", "icon (10).png", "icon (11).png", "icon (12).png",
+        "icon (13).png", "icon (14).png", "icon (15).png", "icon (16).png"
+    );
 
     public GameRoom() {
         this.players = new ArrayList<>();
@@ -42,9 +50,12 @@ public class GameRoom implements Serializable {
     
     public void initializeGame() {
         List<String> cards = new ArrayList<>();
-        for (int i = 0; i < cardCount / 2; i++) {
-            cards.add(String.valueOf(i));
-            cards.add(String.valueOf(i));
+        int numPairs = cardCount / 2;
+        
+        for (int i = 0; i < numPairs; i++) {
+            String imageName = IMAGE_NAMES.get(i % IMAGE_NAMES.size());
+            cards.add(imageName);
+            cards.add(imageName);
         }
         Collections.shuffle(cards);
         
@@ -57,8 +68,16 @@ public class GameRoom implements Serializable {
         this.gameState = new GameState(roomId, cards, scores, cardCount);
         this.gameState.setCurrentPlayerUsername(host.getUsername());
         this.gameState.setGameStatus("PLAYING");
-        this.gameState.setMessage("Trò chơi bắt đầu! Lượt của " + host.getUsername());
+        this.gameState.setMessage("GO! Turn: " + host.getUsername());
         this.status = "PLAYING";
+    }
+    
+    public void resetForRematch() {
+        this.status = "WAITING";
+        this.gameState = null;
+        this.rematchStatus.clear();
+        this.readyPlayers.clear();
+        this.readyPlayers.add(host.getUsername());
     }
     
     public void setPlayerReady(String username) {
@@ -86,6 +105,10 @@ public class GameRoom implements Serializable {
         return gameState;
     }
 
+    public void setGameState(GameState gameState) {
+        this.gameState = gameState;
+    }
+
     public boolean addPlayer(Player player) {
         if (players.size() < maxPlayers && !players.contains(player)) {
             players.add(player);
@@ -106,6 +129,10 @@ public class GameRoom implements Serializable {
 
     public Player getHost() {
         return host;
+    }
+
+    public void setHost(Player host) {
+        this.host = host;
     }
 
     public List<Player> getPlayers() {

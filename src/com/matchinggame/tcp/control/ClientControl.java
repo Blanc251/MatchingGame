@@ -35,7 +35,7 @@ public class ClientControl {
             return true;
         } catch (IOException e) {
             SwingUtilities.invokeLater(() -> 
-                clientView.logError("Lỗi kết nối: Không thể kết nối tới Server.")
+                clientView.logError("Connection Error: Could not connect to the server.")
             );
             return false;
         }
@@ -48,7 +48,7 @@ public class ClientControl {
             oos.flush();
         } catch (IOException e) {
             SwingUtilities.invokeLater(() -> 
-                clientView.logError("Lỗi gửi dữ liệu: Mất kết nối.")
+                clientView.logError("Send Error: Connection lost.")
             );
             closeConnection();
         }
@@ -80,11 +80,11 @@ public class ClientControl {
                 }
             } catch (IOException e) {
                 SwingUtilities.invokeLater(() -> 
-                    clientView.logError("Server đã đóng kết nối.")
+                    clientView.logError("Server has closed the connection.")
                 );
             } catch (ClassNotFoundException e) {
                 SwingUtilities.invokeLater(() -> 
-                    clientView.logError("Lỗi nhận đối tượng Command.")
+                    clientView.logError("Error receiving Command object.")
                 );
             } finally {
                 closeConnection();

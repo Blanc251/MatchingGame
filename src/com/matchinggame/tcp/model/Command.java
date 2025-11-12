@@ -35,6 +35,8 @@ public class Command implements Serializable {
         GAME_UPDATE,
         GAME_OVER,
         
+        OPPONENT_LEFT,
+
         QUIT_GAME,
         REMATCH_REQUEST,
         REMATCH_RESPONSE,

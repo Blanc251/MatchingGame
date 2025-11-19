@@ -521,6 +521,9 @@ public class ServerControl {
         } else {
             view.logMessage(player.getUsername() + " declined the rematch in room " + room.getRoomId());
             
+            // Check if the leaving player was the HOST
+            boolean wasHost = player.equals(room.getHost());
+
             synchronized (room.getPlayers()) {
                 room.removePlayer(player);
             }
@@ -529,14 +532,23 @@ public class ServerControl {
             Command leaveCmd = new Command(Command.Type.LEAVE_ROOM, "SERVER", "You have left the room.");
             handler.sendMessage(leaveCmd);
 
-            room.resetForRematch();
-            
-            if (room.getPlayerCount() > 0) {
+            if (room.getPlayerCount() == 0) {
+                activeRooms.remove(room);
+                view.logMessage("Room " + room.getRoomId() + " was disbanded (empty).");
+            } else {
                 Player remainingPlayer = room.getPlayers().get(0);
                 remainingPlayer.setStatus("Online");
+                
+                // If the host left, assign the remaining player as the new HOST
+                if (wasHost) {
+                    room.setHost(remainingPlayer);
+                    view.logMessage("Host left. " + remainingPlayer.getUsername() + " is now the new host.");
+                }
+                
+                room.resetForRematch();
+                broadcastRoomState(room);
             }
             
-            broadcastRoomState(room);
             broadcastPlayerList();
             broadcastRoomList();
         }
@@ -832,9 +844,9 @@ public void broadcastRoomState(GameRoom room) {
                     gameState.setCardFlipped(flippedIndices[1], false);
                     
                     currentMessage = "No match!";
+                    switchPlayerTurn(room);
                 }
                 
-                switchPlayerTurn(room);
                 
                 gameState.setMessage(currentMessage + " Turn: " + gameState.getCurrentPlayerUsername());
                 

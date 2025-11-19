@@ -616,7 +616,7 @@ public class ClientView extends JFrame {
                     int rematchChoice = JOptionPane.showConfirmDialog(this, 
                             rematcher + " wants a rematch. Do you agree?",
                             "Rematch Request", JOptionPane.YES_NO_OPTION);
-                    clientControl.sendCommand(new Command(Command.Type.REMATCH_RESPONSE, currentUsername, rematchChoice == JOptionPane.YES_OPTION));
+                    clientControl.sendCommand(new Command(Command.Type.REMATCH_REQUEST, currentUsername, null));
                 }
                 break;
                 
@@ -639,16 +639,16 @@ public class ClientView extends JFrame {
     }
     
     private void showGameOverDialog(String message) {
-        boolean isHost = currentUsername.equalsIgnoreCase(currentRoom.getHost().getUsername());
+        countdownLabel.setText(message + ".");
+        int rematchChoice = JOptionPane.showConfirmDialog(this, 
+                message + "\nDo you want a rematch?",
+                "Game Over - Rematch?", JOptionPane.YES_NO_OPTION);
 
-        if (isHost) {
-            countdownLabel.setText(message + ". Waiting for guest to decide on rematch...");
+        if (rematchChoice == JOptionPane.YES_OPTION) {
+            clientControl.sendCommand(new Command(Command.Type.REMATCH_REQUEST, currentUsername, null));
+            countdownLabel.setText("Waiting for opponent...");
         } else {
-            countdownLabel.setText(message + ".");
-            int rematchChoice = JOptionPane.showConfirmDialog(this, 
-                    "Do you want a rematch?",
-                    "Rematch", JOptionPane.YES_NO_OPTION);
-            clientControl.sendCommand(new Command(Command.Type.REMATCH_RESPONSE, currentUsername, rematchChoice == JOptionPane.YES_OPTION));
+            clientControl.sendCommand(new Command(Command.Type.REMATCH_RESPONSE, currentUsername, false));
         }
     }
     
